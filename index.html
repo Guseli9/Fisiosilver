@@ -1,0 +1,51 @@
+
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Asistente de Salud Senior - Fisiosilver</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              'brand-blue': '#005A9C',
+              'brand-lightblue': '#E6F0F8',
+              'brand-green': '#2E7D32',
+              'brand-yellow': '#FFC107',
+              'brand-red': '#D32F2F',
+              'brand-gray': {
+                100: '#F7FAFC',
+                200: '#EDF2F7',
+                300: '#E2E8F0',
+                400: '#CBD5E0',
+                500: '#A0AEC0',
+                600: '#718096',
+                700: '#4A5568',
+                800: '#2D3748',
+                900: '#1A202C',
+              },
+            },
+          },
+        },
+      };
+    </script>
+  <script type="importmap">
+{
+  "imports": {
+    "react": "https://aistudiocdn.com/react@^19.2.0",
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
+    "react/": "https://aistudiocdn.com/react@^19.2.0/",
+    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.28.0",
+    "@supabase/supabase-js": "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm"
+  }
+}
+</script>
+</head>
+  <body class="bg-brand-gray-100">
+    <div id="root"></div>
+    <script type="module" src="/index.tsx"></script>
+  </body>
+</html>

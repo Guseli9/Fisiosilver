@@ -1,0 +1,7 @@
+{
+  "name": "Copy of Fisiosilver 10/01/2026",
+  "description": "An application for individuals over 65 to monitor health data, prevent frailty, and improve their well-being with AI-assisted tracking, recommendations, and analysis.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
