@@ -9,9 +9,10 @@ import AnalysisDisplay from '../components/AnalysisDisplay';
 import type { NutritionalAnalysisResult } from '../types';
 
 const LoadingSpinner = ({ message }: { message: string }) => (
-    <div className="flex flex-col justify-center items-center p-8 text-center">
-        <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-brand-blue"></div>
-        <p className="mt-4 text-xl text-brand-gray-700">{message}</p>
+    <div className="flex flex-col justify-center items-center p-12 text-center bg-brand-gray-50 rounded-3xl shadow-inner">
+        <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-brand-blue mb-6"></div>
+        <p className="text-2xl font-black text-brand-gray-900 uppercase tracking-tighter">{message}</p>
+        <p className="text-[10px] font-bold text-brand-gray-400 mt-2 uppercase tracking-widest">Identificando nutrientes para vitalidad senior...</p>
     </div>
 );
 
@@ -47,23 +48,20 @@ const NutritionScreen: React.FC = () => {
         setSuccessMessage(null);
         
         try {
-            setLoadingMessage("IA analizando su plato...");
+            setLoadingMessage("IA Analizando plato...");
             const analysisResult: NutritionalAnalysisResult = await analyzeFoodPhoto(selectedFile);
             
-            setLoadingMessage("Subiendo fotografía...");
-            // Subimos la foto real al bucket de nutrición
+            setLoadingMessage("Guardando evidencia...");
             const remoteUrl = await uploadFile('nutrition-photos', selectedFile);
             
             const newAnalysis = {
                 id: Date.now().toString(),
-                imagePreview: remoteUrl, // Guardamos la URL de Supabase, no el local blob
+                imagePreview: remoteUrl, 
                 analysis: analysisResult,
                 createdAt: new Date(),
             };
 
-            // Guardar registro en BD
             await saveNutritionLog(user.uid, newAnalysis);
-
             setNutritionalAnalyses(prev => [newAnalysis, ...prev]);
 
             setSelectedFile(null);
@@ -71,63 +69,82 @@ const NutritionScreen: React.FC = () => {
             const fileInput = document.getElementById('food-upload') as HTMLInputElement;
             if(fileInput) fileInput.value = "";
             
-            setSuccessMessage('Análisis nutricional guardado.');
+            setSuccessMessage('Análisis nutricional guardado con éxito.');
             setTimeout(() => setSuccessMessage(null), 3000);
 
         } catch (err: any) {
             console.error(err);
-            setError("Error al procesar la imagen. Compruebe que el Bucket 'nutrition-photos' sea público en Supabase.");
+            setError("Error al procesar la imagen de nutrición.");
         } finally {
             setIsLoading(false);
         }
     };
     
     return (
-        <div className="p-4 sm:p-6">
-            <header className="mb-8">
-                <h1 className="text-4xl font-bold text-brand-gray-800">Nutrición Inteligente</h1>
-                <p className="text-xl text-brand-gray-600">Suba una foto de su comida para obtener un análisis detallado.</p>
+        <div className="p-4 sm:p-6 max-w-4xl mx-auto pb-32">
+            <header className="mb-12 pt-6 text-center sm:text-left">
+                <h1 className="text-5xl font-black text-brand-gray-900 tracking-tighter uppercase leading-none">Nutrición<br/><span className="text-brand-blue">IA SENIOR</span></h1>
+                <p className="text-[10px] font-black text-brand-gray-400 uppercase tracking-[0.4em] mt-4">Alimentación consciente para la longevidad</p>
             </header>
 
-            <div className="bg-white p-6 rounded-2xl shadow-md mb-8">
-                <h2 className="text-2xl font-semibold text-brand-gray-700 mb-4">Analizar Plato</h2>
-                 <div className="flex flex-col items-center border-2 border-dashed border-brand-gray-300 p-8 rounded-xl text-center">
+            <div className="bg-white p-8 rounded-[2.5rem] shadow-soft border border-brand-gray-50 mb-12 hover:shadow-soft-lg transition-all duration-500 group animate-fade-in relative overflow-hidden">
+                <div className="absolute -top-4 -right-4 bg-brand-lightblue/20 w-32 h-32 rounded-full group-hover:scale-150 transition-transform duration-700"></div>
+                
+                <h2 className="text-2xl font-black text-brand-gray-900 mb-6 uppercase tracking-tighter">Analizar mi Comida</h2>
+                <p className="text-brand-gray-600 mb-10 font-bold text-sm leading-relaxed max-w-md">Tome una fotografía de su plato y déjenos calcular los macronutrientes esenciales por usted.</p>
+                
+                 <div className={`flex flex-col items-center border-4 border-dashed rounded-[2.5rem] p-10 text-center transition-all duration-500 cursor-pointer ${imagePreview ? 'border-brand-blue bg-blue-50/20' : 'border-brand-gray-100 bg-brand-gray-50/20 hover:bg-white hover:border-brand-blue/30 hover:scale-[1.01] hover:shadow-xl'}`}>
                     {imagePreview ? (
-                        <img src={imagePreview} alt="Vista previa" className="max-h-64 rounded-lg mb-4 shadow-lg" />
+                        <div className="relative group/preview w-full max-w-sm">
+                            <img src={imagePreview} alt="Comida seleccionada" className="w-full h-auto rounded-3xl mb-4 shadow-2xl border-4 border-white transform transition-transform duration-500 group-hover/preview:scale-[1.03]" />
+                            <div className="absolute inset-0 bg-brand-blue/5 opacity-0 group-hover/preview:opacity-100 rounded-3xl transition-opacity pointer-events-none"></div>
+                        </div>
                     ) : (
-                        <UploadIcon />
+                        <div className="bg-brand-blue/5 text-brand-blue p-8 rounded-full mb-6 group-hover:scale-110 group-hover:bg-brand-blue group-hover:text-white transition-all duration-500 shadow-inner">
+                            <UploadIcon />
+                        </div>
                     )}
-                    <p className="text-lg text-brand-gray-600 my-4">Suba una foto clara de su comida</p>
+                    
                     <input type="file" id="food-upload" accept="image/*" className="hidden" onChange={handleFileChange} />
-                    <label htmlFor="food-upload" className="cursor-pointer bg-brand-lightblue text-brand-blue font-bold py-3 px-6 rounded-lg text-lg hover:bg-sky-200 transition-colors">
-                        {selectedFile ? 'Cambiar Foto' : 'Tomar Foto del Plato'}
+                    <label htmlFor="food-upload" className="cursor-pointer bg-brand-lightblue text-brand-blue font-black py-5 px-10 rounded-2xl text-[11px] uppercase tracking-widest hover:bg-brand-blue hover:text-white transition-all shadow-sm active:scale-95">
+                        {selectedFile ? 'Cambiar Imagen' : 'Tomar Foto del Plato'}
                     </label>
+                    {!selectedFile && <p className="text-[10px] font-black text-brand-gray-400 mt-6 uppercase tracking-widest opacity-60">Fomatos compatibles: JPG, PNG</p>}
                 </div>
                 
-                {isLoading ? <LoadingSpinner message={loadingMessage} /> : (
-                    <button onClick={handleUpload} disabled={!selectedFile} className="w-full mt-6 bg-brand-blue text-white text-2xl font-bold py-5 px-6 rounded-2xl shadow-lg hover:bg-sky-700 transition-colors disabled:bg-brand-gray-400 disabled:cursor-not-allowed">
-                        Analizar Comida
+                {isLoading ? <div className="mt-8"><LoadingSpinner message={loadingMessage} /></div> : (
+                    <button 
+                        onClick={handleUpload} 
+                        disabled={!selectedFile} 
+                        className="w-full mt-10 bg-brand-blue text-white text-xl font-black py-6 rounded-3xl shadow-soft hover:shadow-soft-lg active:scale-[0.98] transition-all disabled:bg-brand-gray-100 disabled:text-brand-gray-400 uppercase tracking-widest"
+                    >
+                        Ejecutar Análisis Nutricional
                     </button>
                 )}
-                 {error && <p className="text-center text-lg mt-4 text-brand-red p-4 bg-red-100 rounded-lg font-bold">{error}</p>}
+                 {error && <p className="text-center text-[10px] mt-6 text-brand-red p-5 bg-brand-soft-red rounded-2xl font-black uppercase tracking-widest shadow-sm">{error}</p>}
                  {successMessage && (
-                    <div className="mt-4 p-4 bg-green-100 text-green-800 rounded-xl border border-green-200 flex items-center justify-center animate-pulse">
-                        <CheckCircleIcon />
-                        <span className="ml-2 font-bold text-lg">{successMessage}</span>
+                    <div className="mt-6 p-6 bg-brand-soft-green text-brand-green rounded-2xl border border-brand-green/10 flex items-center justify-center gap-4 animate-fade-in shadow-sm">
+                        <CheckCircleIcon className="w-6 h-6" />
+                        <span className="font-black text-xs uppercase tracking-widest">{successMessage}</span>
                     </div>
                 )}
             </div>
 
-            <div className="space-y-6">
-                <h2 className="text-2xl font-semibold text-brand-gray-700">Comidas Recientes</h2>
+            <div className="space-y-10">
+                <h2 className="text-[11px] font-black text-brand-gray-400 uppercase tracking-[0.4em] ml-2">Historial de Alimentación</h2>
                 {nutritionalAnalyses.length === 0 ? (
-                    <p className="text-lg text-center text-brand-gray-600 bg-white p-8 rounded-2xl shadow-md">No hay fotos de comida registradas aún.</p>
+                    <div className="bg-white p-24 rounded-[2.5rem] text-center shadow-soft border border-brand-gray-50">
+                        <p className="text-brand-gray-400 font-black uppercase tracking-widest text-[11px]">No hay platos registrados todavía</p>
+                    </div>
                 ) : (
                     nutritionalAnalyses.map(item => (
-                        <div key={item.id} className="bg-white p-6 rounded-2xl shadow-md flex flex-col md:flex-row gap-6">
-                            <div className="w-full md:w-1/3">
-                               <img src={item.imagePreview} alt="Comida" className="w-full h-auto object-cover rounded-lg aspect-square shadow-sm"/>
-                               <p className="text-lg text-brand-gray-500 mt-2 text-center font-medium">{item.createdAt.toLocaleDateString('es-ES', { year: 'numeric', month: 'long', day: 'numeric' })}</p>
+                        <div key={item.id} className="bg-white p-8 rounded-[2.5rem] shadow-soft flex flex-col md:flex-row gap-10 animate-fade-in border border-brand-gray-50 hover:shadow-soft-lg transition-shadow">
+                            <div className="w-full md:w-1/3 shrink-0">
+                               <img src={item.imagePreview} alt="Registro de Comida" className="w-full h-auto object-cover rounded-[2.5rem] aspect-square shadow-xl border-4 border-white"/>
+                               <div className="mt-6 text-center">
+                                    <p className="text-[11px] font-black text-brand-gray-400 uppercase tracking-widest">{item.createdAt.toLocaleDateString('es-ES', { year: 'numeric', month: 'long', day: 'numeric' })}</p>
+                                    <p className="text-xs font-bold text-brand-gray-500 mt-1 uppercase tracking-widest opacity-60">{item.createdAt.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}</p>
+                               </div>
                             </div>
                             <div className="flex-1">
                                 <AnalysisDisplay analysis={item.analysis} type="nutrition" />

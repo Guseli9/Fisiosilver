@@ -1,6 +1,6 @@
 
 import React from 'react';
-import type { ClinicalAnalysisResult, NutritionalAnalysisResult } from '../types';
+import type { ClinicalAnalysisResult, NutritionalAnalysisResult, NutriScore } from '../types';
 import { InfoCircleIcon, SparklesIcon, LightBulbIcon } from './Icons';
 
 interface AnalysisDisplayProps {
@@ -8,119 +8,112 @@ interface AnalysisDisplayProps {
     type: 'clinical' | 'nutrition';
 }
 
-const SectionCard: React.FC<{ title: string, icon: React.ReactNode, children: React.ReactNode }> = ({ title, icon, children }) => (
-    <div className="mb-10 last:mb-0">
-        <div className="flex items-center gap-4 mb-6">
-            <div className="bg-brand-gray-50 p-3 rounded-2xl text-brand-blue shadow-sm">{icon}</div>
-            <h4 className="text-xl font-black text-brand-gray-800 uppercase tracking-tighter">{title}</h4>
+const Card: React.FC<{ title: string, icon: React.ReactNode, children: React.ReactNode }> = ({ title, icon, children }) => (
+    <div className="mb-8 last:mb-0">
+        <div className="flex items-center gap-3 mb-4">
+            <div className="text-brand-blue">{icon}</div>
+            <h4 className="text-sm font-black text-brand-gray-900 uppercase tracking-tighter">{title}</h4>
         </div>
-        <div className="pl-2">
+        <div className="bg-brand-gray-50 p-6 rounded-v-large border border-brand-gray-100">
             {children}
         </div>
     </div>
 );
 
-const BiomarkerItem: React.FC<{ label: string, value?: string }> = ({ label, value }) => {
-    const isMissing = !value || value.toLowerCase().includes('no encontrado') || value.trim() === '';
+const getNutriScoreStyle = (score: NutriScore) => {
+    switch(score) {
+        case 'A': return 'bg-brand-green text-white';
+        case 'B': return 'bg-emerald-500 text-white';
+        case 'C': return 'bg-brand-yellow text-brand-gray-900';
+        case 'D': return 'bg-orange-500 text-white';
+        case 'E': return 'bg-brand-red text-white';
+        default: return 'bg-brand-gray-200 text-brand-gray-400';
+    }
+};
+
+const Biomarker: React.FC<{ label: string, value?: string }> = ({ label, value }) => {
+    const isMissing = !value || value.toLowerCase().includes('---');
     return (
-        <div className={`flex justify-between items-center p-4 rounded-2xl border transition-all ${isMissing ? 'bg-brand-gray-50 border-brand-gray-100 opacity-60' : 'bg-white border-brand-gray-50 shadow-sm hover:shadow-md'}`}>
-            <span className="text-sm font-bold text-brand-gray-600 uppercase tracking-tight">{label}</span>
-            <span className={`text-base font-black ${isMissing ? 'text-brand-gray-400 italic' : 'text-brand-blue'}`}>
-                {isMissing ? 'Pendiente' : value}
+        <div className="flex justify-between items-center py-3 border-b border-brand-gray-200 last:border-0">
+            <span className="text-xs font-bold text-brand-gray-500 uppercase tracking-tight">{label}</span>
+            <span className={`text-sm font-black ${isMissing ? 'text-brand-gray-300 italic' : 'text-brand-blue'}`}>
+                {isMissing ? '---' : value}
             </span>
         </div>
     );
 };
 
 const ClinicalDisplay: React.FC<{ analysis: ClinicalAnalysisResult }> = ({ analysis }) => {
-    if (!analysis || !analysis.biomarkers) return <div className="p-10 text-center font-bold text-brand-gray-400">Datos no disponibles</div>;
-
     return (
-        <div className="space-y-4">
-            <SectionCard title="Resumen Médico" icon={<InfoCircleIcon />}>
-                <p className="text-lg text-brand-gray-700 leading-relaxed font-medium bg-brand-gray-50/50 p-6 rounded-[1.5rem] border border-brand-gray-50">
-                    {analysis.summary}
-                </p>
-            </SectionCard>
+        <div className="space-y-6">
+            <Card title="Resumen Médico" icon={<InfoCircleIcon className="w-5 h-5" />}>
+                <p className="text-sm font-medium text-brand-gray-700 leading-relaxed">{analysis.summary}</p>
+            </Card>
             
-            <SectionCard title="Biomarcadores Extraídos" icon={<SparklesIcon />}>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <BiomarkerItem label="Hemoglobina" value={analysis.biomarkers.hemoglobin} />
-                    <BiomarkerItem label="Albúmina" value={analysis.biomarkers.albumin} />
-                    <BiomarkerItem label="Vitamina D" value={analysis.biomarkers.vitaminD} />
-                    <BiomarkerItem label="Glucosa (Ayunas)" value={analysis.biomarkers.glucoseFasting} />
-                    <BiomarkerItem label="Sodio (Na+)" value={analysis.biomarkers.sodium} />
-                    <BiomarkerItem label="PCR (Prot. C Reactiva)" value={analysis.biomarkers.crp} />
-                    <BiomarkerItem label="Vitamina B12" value={analysis.biomarkers.vitaminB12} />
-                    <BiomarkerItem label="TSH (Tiroides)" value={analysis.biomarkers.tsh} />
-                    <BiomarkerItem label="Creatinina" value={analysis.biomarkers.creatinine} />
-                    <BiomarkerItem label="eGFR (Filtrado)" value={analysis.biomarkers.egfr} />
+            <Card title="Laboratorio" icon={<SparklesIcon className="w-5 h-5" />}>
+                <div className="grid grid-cols-1 gap-1">
+                    <Biomarker label="Hemoglobina" value={analysis.biomarkers.hemoglobin} />
+                    <Biomarker label="Albúmina" value={analysis.biomarkers.albumin} />
+                    <Biomarker label="Glucosa" value={analysis.biomarkers.glucoseFasting} />
+                    <Biomarker label="Creatinina" value={analysis.biomarkers.creatinine} />
                 </div>
-            </SectionCard>
-            
-            <SectionCard title="Sugerencias Preventivas" icon={<LightBulbIcon />}>
-                <div className="space-y-3">
-                    {analysis.recommendations?.map((rec, index) => (
-                        <div key={index} className="flex gap-4 items-start bg-blue-50/50 p-5 rounded-2xl border border-blue-100">
-                            <div className="mt-1 text-brand-blue">•</div>
-                            <p className="text-brand-gray-700 font-bold text-sm leading-tight">{rec}</p>
-                        </div>
+            </Card>
+
+            <Card title="Sugerencias" icon={<LightBulbIcon className="w-5 h-5" />}>
+                <ul className="space-y-3">
+                    {analysis.recommendations?.map((r, i) => (
+                        <li key={i} className="text-xs font-bold text-brand-gray-600 flex gap-2">
+                            <span className="text-brand-blue">•</span> {r}
+                        </li>
                     ))}
-                </div>
-            </SectionCard>
+                </ul>
+            </Card>
         </div>
     );
 };
 
 const MacroBar: React.FC<{ label: string, value?: string, color: string }> = ({ label, value, color }) => {
-    const numValue = parseInt(value || "0") || 0;
-    const percentage = Math.min(100, (numValue / 100) * 100);
+    const num = parseInt(value || "0") || 0;
+    const pct = Math.min(100, (num / 80) * 100);
     return (
-        <div className="mb-4">
-            <div className="flex justify-between mb-2">
-                <span className="text-xs font-black text-brand-gray-500 uppercase tracking-widest">{label}</span>
-                <span className="text-xs font-black text-brand-gray-800">{value || '0'}</span>
+        <div className="mb-4 last:mb-0">
+            <div className="flex justify-between text-[10px] font-black uppercase tracking-widest mb-2">
+                <span className="text-brand-gray-400">{label}</span>
+                <span className="text-brand-gray-800">{value || '0g'}</span>
             </div>
-            <div className="w-full bg-brand-gray-100 rounded-full h-2.5 overflow-hidden shadow-inner">
-                <div className={`${color} h-2.5 rounded-full transition-all duration-1000`} style={{ width: `${percentage}%` }}></div>
+            <div className="h-2 bg-brand-gray-100 rounded-full overflow-hidden">
+                <div className={`${color} h-full transition-all duration-1000`} style={{ width: `${pct}%` }}></div>
             </div>
         </div>
     );
 };
 
 const NutritionDisplay: React.FC<{ analysis: NutritionalAnalysisResult }> = ({ analysis }) => {
-    if (!analysis) return null;
     return (
-        <div className="space-y-8">
-            <div className="bg-brand-blue text-white p-8 rounded-[2rem] text-center shadow-xl">
-                <p className="text-[10px] font-black uppercase tracking-[0.4em] mb-2 opacity-80">Calorías Estimadas</p>
-                <p className="text-5xl font-black">{analysis.calories || '0'}<span className="text-lg ml-1 opacity-60">kcal</span></p>
+        <div className="space-y-6">
+            <div className="flex gap-4 mb-8">
+                <div className="flex-1 bg-brand-blue p-6 rounded-v-large text-center shadow-soft">
+                    <span className="text-[9px] font-black text-white/60 uppercase tracking-widest block mb-1">Calorías</span>
+                    <span className="text-4xl font-black text-white tracking-tighter">{analysis.calories || '0'}</span>
+                    <span className="text-xs font-bold text-white/60 ml-1">kcal</span>
+                </div>
+                {analysis.nutriScore && (
+                    <div className={`w-24 p-6 rounded-v-large text-center shadow-soft flex flex-col items-center justify-center ${getNutriScoreStyle(analysis.nutriScore)}`}>
+                        <span className="text-[9px] font-black uppercase tracking-widest opacity-70">Score</span>
+                        <span className="text-4xl font-black tracking-tighter">{analysis.nutriScore}</span>
+                    </div>
+                )}
             </div>
 
-            <SectionCard title="Macronutrientes" icon={<SparklesIcon />}>
-                <div className="bg-white p-6 rounded-3xl border border-brand-gray-50 shadow-sm">
-                    <MacroBar label="Proteínas" value={analysis.macros.protein} color="bg-sky-500" />
-                    <MacroBar label="Carbohidratos" value={analysis.macros.carbs} color="bg-amber-500" />
-                    <MacroBar label="Grasas" value={analysis.macros.fatsTotal} color="bg-emerald-500" />
-                    <MacroBar label="Fibra" value={analysis.macros.fiber} color="bg-purple-500" />
-                </div>
-            </SectionCard>
+            <Card title="Distribución" icon={<SparklesIcon className="w-5 h-5" />}>
+                <MacroBar label="Proteínas" value={analysis.macros.protein} color="bg-sky-500" />
+                <MacroBar label="Carbohidratos" value={analysis.macros.carbs} color="bg-amber-400" />
+                <MacroBar label="Grasas" value={analysis.macros.fatsTotal} color="bg-emerald-500" />
+            </Card>
 
-            <SectionCard title="Análisis de Porciones" icon={<InfoCircleIcon />}>
-                <p className="text-brand-gray-700 font-medium leading-relaxed italic border-l-4 border-brand-blue pl-6 py-2">
-                    {analysis.portions}
-                </p>
-            </SectionCard>
-
-            <SectionCard title="Sugerencias" icon={<LightBulbIcon />}>
-                <div className="grid grid-cols-1 gap-3">
-                    {analysis.suggestions?.map((sug, index) => (
-                        <div key={index} className="bg-brand-gray-50 p-5 rounded-2xl border border-brand-gray-100 text-sm font-bold text-brand-gray-700 leading-tight">
-                            {sug}
-                        </div>
-                    ))}
-                </div>
-            </SectionCard>
+            <Card title="Comentario IA" icon={<InfoCircleIcon className="w-5 h-5" />}>
+                <p className="text-sm font-medium text-brand-gray-700 italic border-l-2 border-brand-blue pl-4 py-1">{analysis.portions}</p>
+            </Card>
         </div>
     );
 };

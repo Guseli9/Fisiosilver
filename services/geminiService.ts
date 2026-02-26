@@ -2,7 +2,6 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import type { ClinicalAnalysisResult, NutritionalAnalysisResult, HealthData, VigsScore } from "../types";
 
-// Inicialización del cliente de IA con la clave de entorno
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 const fileToGenerativePart = async (file: File) => {
@@ -16,36 +15,14 @@ const fileToGenerativePart = async (file: File) => {
   };
 };
 
-/**
- * Analiza un informe clínico (imagen o PDF) para extraer biomarcadores específicos.
- * Maneja valores ausentes devolviendo "No encontrado".
- */
 export const analyzeClinicalReport = async (file: File): Promise<ClinicalAnalysisResult> => {
   try {
     const filePart = await fileToGenerativePart(file);
     const prompt = `
       Eres un asistente médico experto en análisis de laboratorio clínico y geriatría. 
-      Tu misión es extraer con precisión quirúrgica los siguientes biomarcadores de este informe para rellenar una base de datos médica.
-
-      LISTA DE VALORES A EXTRAER:
-      1. Hemoglobina (Hb)
-      2. Albúmina (Alb)
-      3. Vitamina D (25-OH-D o 25-hidroxivitamina D)
-      4. Glucosa en Ayunas (Glicemia)
-      5. eGFR (Filtrado Glomerular)
-      6. Sodio (Na+)
-      7. Proteína C Reactiva (PCR o CRP)
-      8. Vitamina B12 (Cobalamina)
-      9. TSH (Hormona Tiroestimulante)
-      10. Creatinina sérica
-
-      REGLAS CRÍTICAS:
-      - Si el valor NO aparece en el documento o no es legible, escribe exactamente "No encontrado".
-      - Si el valor SÍ aparece, extrae el número y la unidad (ej: "14.5 g/dL").
-      - Proporciona un resumen clínico breve (max 80 palabras) enfocado en la salud del adulto mayor.
-      - Ofrece 2-3 recomendaciones preventivas basadas en los resultados.
-
-      IMPORTANTE: Devuelve un objeto JSON puro siguiendo el esquema definido.
+      Extrae los biomarcadores con precisión.
+      Si el valor NO aparece, escribe "No encontrado".
+      IMPORTANTE: Devuelve un objeto JSON puro.
     `;
 
     const response = await ai.models.generateContent({
@@ -82,25 +59,21 @@ export const analyzeClinicalReport = async (file: File): Promise<ClinicalAnalysi
         }
       }
     });
-    
     return JSON.parse(response.text || '{}');
-
   } catch (error) {
-    console.error("Error analizando informe clínico:", error);
-    throw new Error("No se pudo procesar el informe. Asegúrese de que el archivo sea una imagen o PDF legible.");
+    throw new Error("No se pudo procesar el informe.");
   }
 };
 
-/**
- * Analiza una foto de comida para estimar valores nutricionales.
- */
 export const analyzeFoodPhoto = async (file: File): Promise<NutritionalAnalysisResult> => {
     try {
         const imagePart = await fileToGenerativePart(file);
         const prompt = `
-          Como nutricionista geriátrico, analiza esta comida.
-          Estima calorías, macronutrientes y micronutrientes clave (Calcio, Vit. D, B12, Hierro, Sodio, Potasio).
-          Proporciona sugerencias de mejora para la salud ósea y muscular del senior.
+          Eres un nutricionista geriátrico experto.
+          Analiza esta foto de comida.
+          1. Estima calorías y macronutrientes.
+          2. Calcula el Nutri-Score (A, B, C, D o E) basándote en la calidad de los ingredientes, fibra, proteínas vs azúcares y grasas saturadas.
+          3. Escribe un comentario corto motivador.
         `;
         
         const response = await ai.models.generateContent({
@@ -112,6 +85,7 @@ export const analyzeFoodPhoto = async (file: File): Promise<NutritionalAnalysisR
                 type: Type.OBJECT,
                 properties: {
                   calories: { type: Type.STRING },
+                  nutriScore: { type: Type.STRING, enum: ["A", "B", "C", "D", "E"] },
                   macros: {
                     type: Type.OBJECT,
                     properties: {
@@ -137,67 +111,32 @@ export const analyzeFoodPhoto = async (file: File): Promise<NutritionalAnalysisR
                       },
                       required: ["calcium", "vitaminD", "vitaminB12", "iron", "sodium", "potassium"]
                   },
-                  portions: { type: Type.STRING },
+                  portions: { type: Type.STRING, description: "Comentario motivador sobre el plato." },
                   suggestions: {
                     type: Type.ARRAY,
                     items: { type: Type.STRING }
                   }
                 },
-                required: ["calories", "macros", "micros", "portions", "suggestions"]
+                required: ["calories", "nutriScore", "macros", "micros", "portions", "suggestions"]
               }
             }
         });
         return JSON.parse(response.text || '{}');
     } catch (error) {
-        console.error("Error analizando foto de comida:", error);
         throw new Error("Error al analizar la fotografía nutricional.");
     }
 };
 
-/**
- * Genera recomendaciones de salud proactivas basadas en datos actuales.
- */
 export const generateHealthRecommendations = async (healthData: HealthData, vigsScore: VigsScore): Promise<{ title: string; justification: string; }[]> => {
   try {
-    const prompt = `
-      Genera 2 recomendaciones de salud para un paciente senior con:
-      - Categoría de Fragilidad: ${vigsScore.category} (Índice: ${vigsScore.index?.toFixed(2) || 'N/A'})
-      - Peso: ${healthData.weight || 'N/A'} kg
-      - Tensión: ${healthData.systolicBP || 'N/A'}/${healthData.diastolicBP || 'N/A'} mmHg
-
-      Devuelve un JSON con la clave "recommendations".
-    `;
-    
+    const prompt = `Genera 2 recomendaciones de salud para un paciente senior. JSON con clave "recommendations".`;
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
       contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            recommendations: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  title: { type: Type.STRING },
-                  justification: { type: Type.STRING }
-                },
-                required: ["title", "justification"]
-              }
-            }
-          },
-          required: ["recommendations"]
-        }
-      }
+      config: { responseMimeType: "application/json" }
     });
-
-    const result = JSON.parse(response.text || '{"recommendations": []}');
-    return result.recommendations;
-
+    return JSON.parse(response.text || '{"recommendations": []}').recommendations;
   } catch (error) {
-    console.error("Error generando recomendaciones:", error);
     return [];
   }
 };

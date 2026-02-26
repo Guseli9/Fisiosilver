@@ -22,79 +22,16 @@ const initialFormData: DailyDataForm = {
 };
 
 const formFields: { label: string; id: keyof HealthData; unit: string; }[] = [
-    { label: "Peso", id: "weight", unit: "kg" },
-    { label: "Tensión Sistólica (Alta)", id: "systolicBP", unit: "mmHg" },
-    { label: "Tensión Diastólica (Baja)", id: "diastolicBP", unit: "mmHg" },
-    { label: "Pulso", id: "pulse", unit: "lpm" },
-    { label: "Saturación de Oxígeno", id: "oxygenSaturation", unit: "%" },
-    { label: "Glucemia", id: "glucose", unit: "mg/dl" },
-    { label: "Perímetro Pantorrilla", id: "calfCircumference", unit: "cm" },
-    { label: "Perímetro Abdominal", id: "abdominalCircumference", unit: "cm" },
-    { label: "Nº de caídas esta semana", id: "falls", unit: "veces" },
+    { label: "Peso Corporal", id: "weight", unit: "kg" },
+    { label: "Tensión Sistólica", id: "systolicBP", unit: "mmHg" },
+    { label: "Tensión Diastólica", id: "diastolicBP", unit: "mmHg" },
+    { label: "Pulso Cardiaco", id: "pulse", unit: "lpm" },
+    { label: "Oxígeno", id: "oxygenSaturation", unit: "%" },
+    { label: "Azúcar", id: "glucose", unit: "mg/dl" },
+    { label: "Pantorrilla", id: "calfCircumference", unit: "cm" },
+    { label: "Abdomen", id: "abdominalCircumference", unit: "cm" },
+    { label: "Caídas", id: "falls", unit: "nº" },
 ];
-
-const InputField: React.FC<{
-    label: string;
-    id: keyof HealthData;
-    unit: string;
-    value: string;
-    placeholder?: string;
-    onChange: (id: keyof HealthData, value: string) => void;
-}> = ({ label, id, unit, value, placeholder, onChange }) => {
-
-    const getInputMode = (): 'text' | 'decimal' | 'numeric' => {
-        switch (id) {
-            case 'weight':
-            case 'calfCircumference':
-            case 'abdominalCircumference':
-                return 'decimal';
-            case 'falls':
-            case 'pulse':
-            case 'oxygenSaturation':
-            case 'glucose':
-            case 'systolicBP':
-            case 'diastolicBP':
-                return 'numeric';
-            default:
-                return 'text';
-        }
-    };
-
-    const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        let val = e.target.value;
-        const inputMode = getInputMode();
-        
-        if (inputMode === 'decimal') {
-            val = val.replace(/[^0-9.]/g, '').replace(/(\..*)\./g, '$1');
-        } else if (inputMode === 'numeric') {
-            val = val.replace(/[^0-9]/g, '');
-        }
-
-        onChange(id, val);
-    };
-
-    return (
-        <div className="mb-6">
-            <label htmlFor={id} className="block text-xl text-brand-gray-700 font-medium mb-2">{label}</label>
-            <div className="relative">
-                <input
-                    type="text"
-                    inputMode={getInputMode()}
-                    id={id}
-                    name={id}
-                    value={value}
-                    onChange={handleChange}
-                    placeholder={placeholder}
-                    className="w-full p-4 pr-24 text-xl border-2 border-brand-gray-300 rounded-lg focus:ring-brand-blue focus:border-brand-blue transition-colors"
-                />
-                <span className="absolute inset-y-0 right-0 flex items-center pr-6 text-lg text-brand-gray-500 pointer-events-none">
-                    {unit}
-                </span>
-            </div>
-        </div>
-    );
-};
-
 
 const DiaryScreen: React.FC = () => {
     const context = useContext(AppContext);
@@ -102,122 +39,83 @@ const DiaryScreen: React.FC = () => {
     const { healthData, setHealthData, setAlerts, diaryPreferences } = context!;
     
     const [formData, setFormData] = useState<DailyDataForm>(initialFormData);
-    const [isSavingData, setIsSavingData] = useState(false);
-    const [successMessage, setSuccessMessage] = useState<string | null>(null);
+    const [isSaving, setIsSaving] = useState(false);
+    const [success, setSuccess] = useState(false);
 
-    const visibleFields = formFields.filter(field => 
-        (diaryPreferences || []).includes(field.id)
-    );
+    const visibleFields = formFields.filter(f => (diaryPreferences || []).includes(f.id));
 
-    const handleFormChange = useCallback((field: keyof HealthData, value: string) => {
-        setFormData(prev => ({ ...prev, [field]: value }));
-    }, []);
-
-    const handleSaveDailyData = async () => {
+    const handleSave = async () => {
         if (!user) return;
-        setIsSavingData(true);
-        setSuccessMessage(null);
-        
-        const updatedData: Partial<HealthData> = {};
-        let hasNewData = false;
-
-        (Object.keys(formData) as Array<keyof HealthData>).forEach(key => {
-            if (key === 'height') return;
-            const value = formData[key];
-            if (value.trim() !== '') {
-                hasNewData = true;
-                const numValue = parseFloat(value);
-                if (!isNaN(numValue)) {
-                    updatedData[key] = numValue;
-                }
-            }
+        setIsSaving(true);
+        const updated: Partial<HealthData> = {};
+        Object.keys(formData).forEach(k => {
+            const val = formData[k as keyof HealthData];
+            if (val.trim()) updated[k as keyof HealthData] = parseFloat(val);
         });
 
-        if (!hasNewData) {
-            alert("Por favor, introduzca al menos un dato para guardar.");
-            setIsSavingData(false);
-            return;
-        }
+        if (Object.keys(updated).length === 0) { setIsSaving(false); return; }
 
-        const newHealthData = { ...healthData, ...updatedData };
-        
         try {
-            // Persistir a Supabase
-            await saveDailyLog(user.uid, newHealthData);
-            
-            // Actualizar contexto después de éxito
-            setHealthData(newHealthData);
-            
-            const newAlerts: Alert[] = [
-                { id: Date.now(), type: 'success', title: 'Datos Guardados', message: `Sus datos se han guardado con éxito.` },
-                ...context!.alerts.filter(a => a.type !== 'success' && a.type !== 'danger'),
-            ];
-            
-            setAlerts(newAlerts);
-            await updateUserProfile(user.uid, { alerts: newAlerts });
-            
-            setSuccessMessage('Los datos se han guardado correctamente.');
-            setTimeout(() => setSuccessMessage(null), 3000);
+            const currentHealthData = { ...healthData, ...updated };
+            await saveDailyLog(user.uid, currentHealthData);
+            setHealthData(currentHealthData);
+            setSuccess(true);
+            setTimeout(() => setSuccess(false), 3000);
             setFormData(initialFormData);
-
-        } catch (error: any) {
-            console.error("Failed to save data:", error);
-            // Extraction du message d'erreur pour éviter "[object Object]"
-            const errorMsg = error instanceof Error ? error.message : (error?.message || "Error al conectar con la base de datos.");
-            
-            setAlerts(prev => [
-                { id: Date.now(), type: 'danger', title: 'Error de Guardado', message: errorMsg },
-                ...prev
-            ]);
-            alert(`Hubo un error: ${errorMsg}`);
-        } finally {
-            setIsSavingData(false);
-        }
+        } catch (e) { alert("Error al guardar."); }
+        finally { setIsSaving(false); }
     };
-    
+
     return (
-        <div className="p-4 sm:p-6">
-            <header className="mb-8">
-                <h1 className="text-4xl font-bold text-brand-gray-800">Diario de Salud</h1>
-                <p className="text-xl text-brand-gray-600">Registre sus constantes vitales para un seguimiento preventivo.</p>
+        <div className="p-6 max-w-3xl mx-auto animate-fade-in pb-32">
+            <header className="mb-12 pt-8 text-center sm:text-left">
+                <h1 className="text-5xl font-black text-brand-gray-900 tracking-tighter uppercase mb-2 leading-none">Mi Diario<br/><span className="text-brand-blue">DE SALUD</span></h1>
+                <p className="text-brand-gray-500 font-black text-[12px] uppercase tracking-[0.3em] mt-6">Anota tus mediciones hoy con tranquilidad</p>
             </header>
 
-            <section className="bg-white p-6 rounded-2xl shadow-md mb-8 border border-brand-gray-100">
-                <h2 className="text-2xl font-semibold text-brand-gray-700 mb-6">Nueva Entrada</h2>
-                
-                {visibleFields.length > 0 ? (
-                    visibleFields.map(field => (
-                        <InputField
-                            key={field.id}
-                            label={field.label}
-                            id={field.id}
-                            unit={field.unit}
-                            value={formData[field.id]}
-                            onChange={handleFormChange}
-                            placeholder={healthData[field.id]?.toString() || ''}
-                        />
-                    ))
-                ) : (
-                    <div className="bg-brand-gray-50 p-8 rounded-xl text-center border-2 border-dashed border-brand-gray-200">
-                         <p className="text-brand-gray-500 font-medium">No hay métricas visibles. Configure su diario en su perfil.</p>
+            <div className="bg-white p-8 sm:p-12 rounded-[3rem] shadow-soft border border-brand-gray-100">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-12 gap-y-12">
+                    {visibleFields.map(f => (
+                        <div key={f.id} className="relative animate-slide-up flex flex-col items-center sm:items-start">
+                            <label className="block text-[11px] font-black text-brand-gray-400 uppercase tracking-widest mb-4 ml-1">{f.label}</label>
+                            <div className="flex items-center gap-4 w-full max-w-[280px]">
+                                <input 
+                                    type="number" 
+                                    value={formData[f.id]} 
+                                    onChange={e => setFormData({...formData, [f.id]: e.target.value})} 
+                                    className="w-full p-6 bg-white border-2 border-brand-gray-100 rounded-[1.5rem] text-4xl font-black text-brand-gray-900 outline-none focus:border-brand-blue focus:ring-8 focus:ring-brand-blue/5 transition-all shadow-sm text-center tracking-tighter" 
+                                    placeholder={healthData[f.id]?.toString() || '0'}
+                                />
+                                <div className="flex flex-col shrink-0">
+                                    <span className="text-[11px] font-black text-brand-blue uppercase tracking-tighter w-10 text-left leading-none">{f.unit}</span>
+                                </div>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+
+                {visibleFields.length === 0 && (
+                    <div className="text-center py-20">
+                        <p className="text-brand-gray-400 font-black uppercase tracking-widest text-sm mb-4">No has activado métricas en tu diario.</p>
+                        <p className="text-xs text-brand-gray-400 font-bold uppercase tracking-[0.2em]">Pulsa en tu foto de perfil para configurarlas.</p>
                     </div>
                 )}
 
-                <button
-                    onClick={handleSaveDailyData}
-                    disabled={isSavingData}
-                    className="w-full mt-6 bg-brand-blue text-white text-xl font-black py-5 px-6 rounded-2xl shadow-lg hover:bg-sky-800 transition-all active:scale-[0.98] disabled:bg-brand-gray-300 disabled:cursor-not-allowed uppercase tracking-tighter"
+                <button 
+                    onClick={handleSave} 
+                    disabled={isSaving || visibleFields.length === 0} 
+                    className="w-full mt-16 bg-brand-blue text-white py-8 rounded-[2rem] font-black text-lg uppercase tracking-widest shadow-soft hover:shadow-soft-lg active:scale-[0.98] transition-all disabled:bg-brand-gray-100 disabled:text-brand-gray-400"
                 >
-                    {isSavingData ? 'Enviando a la nube...' : 'Guardar en mi Historial'}
+                    {isSaving ? 'Guardando Registro...' : 'Confirmar Datos Médicos'}
                 </button>
 
-                {successMessage && (
-                    <div className="mt-6 p-5 bg-green-50 text-green-700 rounded-2xl border-2 border-green-200 flex items-center justify-center animate-bounce">
-                        <CheckCircleIcon />
-                        <span className="ml-3 font-black text-lg uppercase tracking-tight">{successMessage}</span>
+                {success && (
+                    <div className="mt-10 p-8 bg-brand-soft-green text-brand-green rounded-[2rem] flex items-center justify-center gap-5 animate-fade-in shadow-sm border border-brand-green/10">
+                        <CheckCircleIcon className="w-8 h-8" />
+                        <span className="font-black text-sm uppercase tracking-widest tracking-[0.2em]">Datos guardados con éxito</span>
                     </div>
                 )}
-            </section>
+            </div>
         </div>
     );
 };

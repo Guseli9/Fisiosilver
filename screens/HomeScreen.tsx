@@ -1,359 +1,339 @@
 
-import React, { useContext, useState, useEffect } from 'react';
+import React, { useContext, useState, useEffect, useMemo } from 'react';
 import { AppContext } from '../contexts/AppContext';
 import { useAuth } from '../contexts/AuthContext';
-import { getDailyHistory, updateUserProfile, getUserProfile } from '../services/firestore';
-import type { VigsCategory, HealthData, UserProfile } from '../types';
+import { getDailyHistory, updateUserProfile, getUserProfile, getVigsHistory, getNutritionLogs } from '../services/firestore';
+import type { VigsCategory, HealthData, UserProfile, SmokingStatus, NutriScore } from '../types';
 import { XMarkIcon, avatars, PencilSquareIcon, CheckCircleIcon } from '../components/Icons';
 
 const diaryOptions = [
-    { id: 'weight', label: 'Peso Corporal' },
-    { id: 'systolicBP', label: 'Tensión Sistólica' },
-    { id: 'diastolicBP', label: 'Tensión Diastólica' },
+    { id: 'weight', label: 'Peso Corporal (kg)' },
+    { id: 'systolicBP', label: 'Tensión Sistólica (mmHg)' },
+    { id: 'diastolicBP', label: 'Tensión Diastólica (mmHg)' },
     { id: 'pulse', label: 'Pulso (LPM)' },
-    { id: 'oxygenSaturation', label: 'Saturación Oxígeno' },
-    { id: 'glucose', label: 'Azúcar en Sangre' },
-    { id: 'falls', label: 'Control de Caídas' },
-    { id: 'calfCircumference', label: 'Pantorrilla' },
-    { id: 'abdominalCircumference', label: 'Abdomen' },
+    { id: 'oxygenSaturation', label: 'Saturación Oxígeno (%)' },
+    { id: 'glucose', label: 'Azúcar en Sangre (mg/dl)' },
+    { id: 'falls', label: 'Control de Caídas (nº)' },
+    { id: 'calfCircumference', label: 'Pantorrilla (cm)' },
+    { id: 'abdominalCircumference', label: 'Abdomen (cm)' },
 ];
 
-const RECOMMENDED_RANGES: Record<string, { min: number; max: number }> = {
-    systolicBP: { min: 110, max: 140 },
-    diastolicBP: { min: 60, max: 90 },
-    pulse: { min: 60, max: 100 },
-    oxygenSaturation: { min: 95, max: 100 },
-    glucose: { min: 70, max: 110 },
-    calfCircumference: { min: 31, max: 45 },
-    abdominalCircumference: { min: 70, max: 102 },
-};
+const smokingOptions: { id: SmokingStatus; label: string }[] = [
+    { id: 'Nunca', label: 'Nunca' },
+    { id: 'Ex-fumador', label: 'Ex-fumador' },
+    { id: 'Activo', label: 'Fumador' },
+];
 
-const getVigsColor = (category: VigsCategory): string => {
+const getVigsColorClass = (category: VigsCategory): string => {
   switch (category) {
-    case 'No frágil': return 'bg-brand-green';
-    case 'Fragilidad leve': return 'bg-emerald-500';
-    case 'Fragilidad moderada': return 'bg-brand-yellow';
-    case 'Fragilidad severa': return 'bg-brand-red';
-    default: return 'bg-brand-gray-400';
+    case 'No frágil': return 'text-brand-green bg-brand-soft-green';
+    case 'Fragilidad leve': return 'text-emerald-600 bg-emerald-50';
+    case 'Fragilidad moderada': return 'text-brand-yellow bg-brand-soft-yellow';
+    case 'Fragilidad severa': return 'text-brand-red bg-brand-soft-red';
+    default: return 'text-brand-gray-500 bg-brand-gray-100';
   }
 };
 
-// --- Chart Component ---
-interface ChartDataPoint { date: Date; value: number; }
-interface HistoryChartProps { 
-    data: ChartDataPoint[]; 
-    unit: string; 
-    color: string;
-    referenceRange?: { min: number; max: number; label?: string };
-}
-
-const HistoryChart: React.FC<HistoryChartProps> = ({ data, unit, color, referenceRange }) => {
-    if (data.length < 2) return <div className="h-64 flex items-center justify-center bg-gray-50 rounded-lg border border-gray-200"><p className="text-gray-500 text-center px-4 font-bold">Necesita al menos 2 registros para ver su evolución.</p></div>;
-    
-    const width = 100; const height = 50; const padding = 8;
-    const values = data.map(d => d.value);
-    let minVal = Math.min(...values);
-    let maxVal = Math.max(...values);
-    
-    if (referenceRange) {
-        minVal = Math.min(minVal, referenceRange.min);
-        maxVal = Math.max(maxVal, referenceRange.max);
+const getNutriScoreColor = (score?: NutriScore): string => {
+    switch (score) {
+        case 'A': return 'bg-brand-green';
+        case 'B': return 'bg-emerald-500';
+        case 'C': return 'bg-brand-yellow';
+        case 'D': return 'bg-orange-500';
+        case 'E': return 'bg-brand-red';
+        default: return 'bg-brand-gray-200';
     }
-    const rangeBuffer = (maxVal - minVal) * 0.15;
-    minVal = Math.floor(minVal - rangeBuffer);
-    maxVal = Math.ceil(maxVal + rangeBuffer);
-    const range = maxVal - minVal || 1;
-
-    const getX = (index: number) => padding + (index / (data.length - 1)) * (width - 2 * padding);
-    const getY = (val: number) => height - padding - ((val - minVal) / range) * (height - 2 * padding);
-    const pathD = data.map((d, i) => `${i === 0 ? 'M' : 'L'} ${getX(i)} ${getY(d.value)}`).join(' ');
-
-    return (
-        <div className="w-full">
-            <div className="relative w-full aspect-[2/1] bg-white rounded-3xl border border-gray-100 p-4 shadow-inner overflow-hidden">
-                <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-full overflow-visible">
-                    {referenceRange && (
-                        <rect 
-                            x={padding} 
-                            y={getY(referenceRange.max)} 
-                            width={width - 2 * padding} 
-                            height={Math.abs(getY(referenceRange.min) - getY(referenceRange.max))} 
-                            fill="rgba(46, 125, 50, 0.1)" 
-                        />
-                    )}
-                    <path d={pathD} fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                    {data.map((d, i) => (
-                        <circle key={i} cx={getX(i)} cy={getY(d.value)} r="1.8" fill="white" stroke={color} strokeWidth="1" />
-                    ))}
-                </svg>
-            </div>
-            <div className="flex justify-between mt-4 text-xs text-brand-gray-500 font-black px-2 uppercase tracking-widest">
-                <span>Mín: {Math.min(...values)} {unit}</span>
-                <span>Máx: {Math.max(...values)} {unit}</span>
-            </div>
-        </div>
-    );
 };
 
-const VigsScoreIndicator: React.FC = () => {
-    const context = useContext(AppContext);
-    if (!context) return null;
-    const { vigsScore } = context;
-    const displayIndex = vigsScore.index !== undefined ? vigsScore.index.toFixed(2) : (vigsScore.score / 25.0).toFixed(2);
+interface ChartDataPoint { date: Date; value: number; }
+
+const HistoryChart: React.FC<{ 
+    data: ChartDataPoint[]; 
+    color: string; 
+    unit: string;
+    range?: { min: number; max: number };
+}> = ({ data, color, unit, range }) => {
+    if (data.length === 0) return <div className="h-40 flex items-center justify-center bg-brand-gray-50 rounded-2xl"><p className="text-brand-gray-400 text-[10px] font-black uppercase tracking-widest">Sin historial</p></div>;
+    const width = 400; const height = 180; const px = 40; const py = 30;
+    const values = data.map(d => d.value);
+    let minV = Math.min(...values);
+    let maxV = Math.max(...values);
+    if (range) { minV = Math.min(minV, range.min); maxV = Math.max(maxV, range.max); }
+    const buf = (maxV - minV) * 0.2 || 5;
+    minV = Math.max(0, minV - buf); maxV = maxV + buf;
+    const r = maxV - minV || 1;
+    const getX = (i: number) => px + (i / Math.max(1, data.length - 1)) * (width - 2 * px);
+    const getY = (v: number) => height - py - ((v - minV) / r) * (height - 2 * py);
+    const path = data.map((d, i) => `${i === 0 ? 'M' : 'L'} ${getX(i)} ${getY(d.value)}`).join(' ');
     
     return (
-        <div className="bg-white p-8 rounded-[2.5rem] shadow-xl text-center border border-brand-gray-100 mb-8 transform transition-all hover:scale-[1.01]">
-            <h2 className="text-xl text-brand-gray-700 font-black mb-6 uppercase tracking-tighter">Índice de Fragilidad VIGS</h2>
-            
-            <div className="flex flex-col items-center justify-center gap-4">
-                <div className={`w-36 h-36 rounded-full flex flex-col items-center justify-center text-white shadow-2xl ${getVigsColor(vigsScore.category)} ring-8 ring-white/20`}>
-                    <span className="text-5xl font-black leading-none">{displayIndex}</span>
-                    <span className="text-[10px] font-bold uppercase tracking-[0.3em] mt-2">IF-VIG INDEX</span>
-                </div>
-                
-                <div className="mt-4 text-center">
-                    <span className={`px-6 py-2 rounded-full text-white text-base font-black uppercase tracking-widest shadow-lg ${getVigsColor(vigsScore.category)}`}>
-                        {vigsScore.category}
-                    </span>
-                </div>
-            </div>
-        </div>
+        <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-auto overflow-visible">
+            {range && (
+                <>
+                    <rect x={px} y={getY(range.max)} width={width - 2 * px} height={Math.max(2, Math.abs(getY(range.min) - getY(range.max)))} fill="rgba(46,125,50,0.08)" rx="4" />
+                    <text x={px-5} y={getY(range.max)} textAnchor="end" className="text-[6px] fill-brand-green font-black">Máx</text>
+                    <text x={px-5} y={getY(range.min)} textAnchor="end" className="text-[6px] fill-brand-green font-black">Mín</text>
+                </>
+            )}
+            <path d={path} fill="none" stroke={color} strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
+            {data.map((d, i) => (
+                <circle key={i} cx={getX(i)} cy={getY(d.value)} r="4" fill="white" stroke={color} strokeWidth="3" />
+            ))}
+            <text x={px} y={height - 5} className="text-[8px] font-black fill-brand-gray-400">{data[0].date.toLocaleDateString()}</text>
+            <text x={width - px} y={height - 5} textAnchor="end" className="text-[8px] font-black fill-brand-gray-400">{data[data.length-1].date.toLocaleDateString()}</text>
+        </svg>
     );
 };
 
-const HealthDataGrid: React.FC<{ onMetricClick: (metric: keyof HealthData, label: string, unit: string) => void }> = ({ onMetricClick }) => {
-    const context = useContext(AppContext);
-    if (!context) return null;
-    const { healthData, diaryPreferences } = context;
-
-    const allDataPoints: { key: keyof HealthData; label: string; value: string | number | null; unit: string }[] = [
-        { key: "weight", label: "Peso", value: healthData.weight, unit: "kg" },
-        { key: "systolicBP", label: "T. Sistólica", value: healthData.systolicBP, unit: "mmHg" },
-        { key: "diastolicBP", label: "T. Diastólica", value: healthData.diastolicBP, unit: "mmHg" },
-        { key: "pulse", label: "Pulso", value: healthData.pulse, unit: "lpm" },
-        { key: "oxygenSaturation", label: "Sat. O₂", value: healthData.oxygenSaturation, unit: "%" },
-        { key: "glucose", label: "Glucemia", value: healthData.glucose, unit: "mg/dl" },
-        { key: "falls", label: "Caídas", value: healthData.falls, unit: "" },
-        { key: "calfCircumference", label: "Pantorrilla", value: healthData.calfCircumference, unit: "cm" },
-        { key: "abdominalCircumference", label: "Abdomen", value: healthData.abdominalCircumference, unit: "cm" },
-    ];
-
-    const visiblePoints = allDataPoints.filter(point => (diaryPreferences || []).includes(point.key));
-
+const IndexCard: React.FC<{ 
+    title: string; value: string | number; percent: number; 
+    description: string; inverted?: boolean; category?: string; categoryClass?: string;
+    onClick?: () => void; customColor?: string;
+}> = ({ title, value, percent, description, inverted = false, category, categoryClass, onClick, customColor }) => {
+    const getColor = (p: number) => {
+        if (customColor) return customColor;
+        if (inverted) return p > 70 ? 'bg-brand-green' : p > 40 ? 'bg-brand-yellow' : 'bg-brand-red';
+        return p < 30 ? 'bg-brand-green' : p < 60 ? 'bg-brand-yellow' : 'bg-brand-red';
+    };
     return (
-        <div className="mt-8 px-2">
-            <h2 className="text-xl text-brand-gray-800 font-black mb-6 px-2 uppercase tracking-tighter">Monitoreo Diario</h2>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-5">
-                {visiblePoints.map(point => (
-                    <button key={point.key} onClick={() => onMetricClick(point.key, point.label, point.unit)} className="bg-white p-6 rounded-3xl shadow-sm text-center hover:shadow-xl hover:scale-105 transition-all border border-gray-50 active:scale-95 group">
-                        <p className="text-[10px] text-brand-blue font-black uppercase tracking-[0.2em] mb-2 group-hover:text-sky-500">{point.label}</p>
-                        <p className="text-3xl font-black text-brand-gray-800 mb-1">{point.value !== null ? point.value : '-'}</p>
-                        <p className="text-[10px] text-brand-gray-400 font-bold uppercase">{point.unit || 'VALOR'}</p>
-                    </button>
-                ))}
+        <button onClick={onClick} className="bg-white p-6 rounded-v-large shadow-soft border border-brand-gray-100 flex flex-col justify-between min-h-[220px] transition-all hover:shadow-soft-lg group text-left w-full active:scale-[0.98]">
+            <div>
+                <div className="flex justify-between items-start mb-2">
+                    <h2 className="text-[10px] font-black text-brand-gray-400 uppercase tracking-widest">{title}</h2>
+                    {category && <div className={`px-2 py-0.5 rounded-full font-black text-[8px] uppercase tracking-wider ${categoryClass}`}>{category}</div>}
+                </div>
+                <div className="flex items-baseline gap-1 mb-4">
+                    <span className="text-5xl font-black text-brand-gray-900 tracking-tighter leading-none">{value}</span>
+                </div>
             </div>
-        </div>
+            <div className="space-y-2">
+                <div className="w-full h-2.5 bg-brand-gray-100 rounded-full overflow-hidden">
+                    <div className={`h-full transition-all duration-1000 ${getColor(percent)}`} style={{ width: `${Math.max(5, percent)}%` }} />
+                </div>
+                <p className="text-brand-gray-600 text-[10px] font-bold leading-tight">{description}</p>
+            </div>
+        </button>
     );
 };
 
 const HomeScreen: React.FC = () => {
     const { user, signOut } = useAuth();
-    const { healthData, setHealthData, setDiaryPreferences, diaryPreferences, setVigsScore } = useContext(AppContext)!;
+    const { healthData, setHealthData, setDiaryPreferences, diaryPreferences, setVigsScore, vigsScore } = useContext(AppContext)!;
     const [profile, setProfile] = useState<UserProfile | null>(null);
     const [isProfileOpen, setIsProfileOpen] = useState(false);
     const [isEditing, setIsEditing] = useState(false);
-    const [selectedMetric, setSelectedMetric] = useState<{key: keyof HealthData, label: string, unit: string} | null>(null);
-    const [historyData, setHistoryData] = useState<ChartDataPoint[]>([]);
     const [isLoading, setIsLoading] = useState(true);
-    const [saveLoading, setSaveLoading] = useState(false);
+    const [latestNutriScore, setLatestNutriScore] = useState<NutriScore | undefined>(undefined);
+    
+    const [selectedDetail, setSelectedDetail] = useState<{ label: string, key: string, unit: string, range?: {min: number, max: number} } | null>(null);
+    const [detailHistory, setDetailHistory] = useState<ChartDataPoint[]>([]);
 
-    // Form states
     const [editName, setEditName] = useState("");
-    const [editBirthDate, setEditBirthDate] = useState("");
     const [editHeight, setEditHeight] = useState("");
-    const [editDiaryPrefs, setEditDiaryPrefs] = useState<(keyof HealthData)[]>([]);
+    const [editSmoking, setEditSmoking] = useState<SmokingStatus>("Nunca");
+    const [editPrefs, setEditPrefs] = useState<(keyof HealthData)[]>([]);
+
+    const calculatedIndices = useMemo(() => {
+        const vigs = vigsScore.index || (vigsScore.score / 25);
+        const sys = healthData.systolicBP || 120;
+        const falls = healthData.falls || 0;
+        const smokeFactor = profile?.smokingStatus === 'Activo' ? 20 : profile?.smokingStatus === 'Ex-fumador' ? 5 : 0;
+        const prot = Math.max(0, Math.min(100, (1 - vigs) * 100));
+        const cvRisk = Math.min(100, ((sys - 110) / 70 * 80) + smokeFactor);
+        const fallRisk = Math.min(100, falls * 33);
+        
+        let nutriPercent = 0;
+        if (latestNutriScore === 'A') nutriPercent = 100;
+        else if (latestNutriScore === 'B') nutriPercent = 80;
+        else if (latestNutriScore === 'C') nutriPercent = 60;
+        else if (latestNutriScore === 'D') nutriPercent = 40;
+        else if (latestNutriScore === 'E') nutriPercent = 20;
+
+        return { autonomy: vigs * 100, protection: prot, cardio: cvRisk, falls: fallRisk, nutrition: nutriPercent };
+    }, [vigsScore, healthData, profile, latestNutriScore]);
 
     const loadProfile = async () => {
         if (!user) return;
         setIsLoading(true);
         try {
-            const data = await getUserProfile(user.uid);
-            if (data) {
-                setProfile(data);
-                setEditName(data.displayName);
-                setEditBirthDate(data.birthDate);
-                setEditHeight(data.healthData.height?.toString() || "");
-                setEditDiaryPrefs(data.diaryPreferences);
-                
-                setHealthData(data.healthData);
-                setDiaryPreferences(data.diaryPreferences);
-                setVigsScore(data.vigsScore);
+            const [pData, nLogs] = await Promise.all([
+                getUserProfile(user.uid),
+                getNutritionLogs(user.uid)
+            ]);
+            if (pData) {
+                setProfile(pData);
+                setHealthData(pData.healthData);
+                setDiaryPreferences(pData.diaryPreferences);
+                setVigsScore(pData.vigsScore);
+                setEditName(pData.displayName);
+                setEditHeight(pData.healthData.height?.toString() || "170");
+                setEditSmoking(pData.smokingStatus);
+                setEditPrefs(pData.diaryPreferences);
             }
-        } catch (e) { console.error(e); }
-        finally { setIsLoading(false); }
+            if (nLogs.length > 0) {
+                setLatestNutriScore(nLogs[0].analysis.nutriScore);
+            }
+        } catch (e) { console.error(e); } finally { setIsLoading(false); }
     };
 
     useEffect(() => { loadProfile(); }, [user]);
 
     const handleSaveProfile = async () => {
         if (!user) return;
-        setSaveLoading(true);
         try {
-            const updates: Partial<UserProfile> = {
+            await updateUserProfile(user.uid, {
                 displayName: editName,
-                birthDate: editBirthDate,
-                diaryPreferences: editDiaryPrefs,
-                healthData: {
-                    ...healthData,
-                    height: parseFloat(editHeight) || null
-                }
-            };
-            await updateUserProfile(user.uid, updates);
-            await loadProfile(); 
+                smokingStatus: editSmoking,
+                diaryPreferences: editPrefs,
+                healthData: { ...healthData, height: parseFloat(editHeight) || 170 }
+            });
+            await loadProfile();
             setIsEditing(false);
-        } catch (e) {
-            console.error(e);
-            alert("Error al actualizar perfil.");
-        } finally { setSaveLoading(false); }
+        } catch (e) { alert("Error al actualizar perfil."); }
     };
 
-    const handleMetricClick = async (key: keyof HealthData, label: string, unit: string) => {
+    const handleDetail = async (label: string, key: string, unit: string, range?: {min: number, max: number}) => {
         if (!user) return;
-        setSelectedMetric({ key, label, unit });
+        setSelectedDetail({ label, key, unit, range });
         try {
-            const logs = await getDailyHistory(user.uid);
-            const chartData = logs
-                .map(l => ({ date: l.createdAt, value: l[key] as number | null }))
-                .filter(d => d.value !== null)
-                .sort((a, b) => a.date.getTime() - b.date.getTime()) as ChartDataPoint[];
-            setHistoryData(chartData);
+            if (key === 'vigs') {
+                const hist = await getVigsHistory(user.uid);
+                setDetailHistory(hist.map(h => ({ date: h.createdAt, value: h.index })).reverse());
+            } else if (key === 'systolicBP' || key === 'diastolicBP' || key === 'weight' || key === 'pulse' || key === 'glucose' || key === 'oxygenSaturation') {
+                const logs = await getDailyHistory(user.uid);
+                setDetailHistory(logs.map(l => ({ date: l.createdAt, value: l[key as keyof HealthData] as number })).filter(d => d.value !== null).reverse());
+            } else if (key === 'cardio') {
+                const logs = await getDailyHistory(user.uid);
+                const sFactor = profile?.smokingStatus === 'Activo' ? 20 : profile?.smokingStatus === 'Ex-fumador' ? 5 : 0;
+                setDetailHistory(logs.map(l => ({ date: l.createdAt, value: Math.min(100, (( (l.systolicBP || 120) - 110) / 70 * 80) + sFactor) })).reverse());
+            } else {
+                setDetailHistory([]);
+            }
         } catch (e) { console.error(e); }
     };
 
     const AvatarComponent = profile ? avatars[profile.avatarId] || avatars[0] : avatars[0];
 
-    if (isLoading) return <div className="flex h-screen items-center justify-center bg-brand-gray-100"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-brand-blue"></div></div>;
+    if (isLoading) return <div className="flex h-screen items-center justify-center bg-brand-bg"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-brand-blue"></div></div>;
 
     return (
-        <div className="p-4 sm:p-6 pb-24 max-w-3xl mx-auto">
-            <header className="flex justify-between items-center mb-12 pt-6">
+        <div className="p-6 max-w-6xl mx-auto pb-32">
+            <header className="flex justify-between items-center mb-12 pt-4">
                 <div>
-                    <h1 className="text-4xl font-black text-brand-gray-800 tracking-tighter leading-tight">HOLA,<br/><span className="text-brand-blue uppercase">{profile?.displayName?.split(' ')[0] || 'USUARIO'}</span></h1>
+                    <p className="text-brand-gray-500 font-black uppercase tracking-[0.4em] text-[10px] mb-2">Monitor Fisiosilver</p>
+                    <h1 className="text-4xl font-black text-brand-gray-900 tracking-tighter leading-tight">Buenos días, <br/><span className="text-brand-blue">{profile?.displayName}</span></h1>
                 </div>
-                <button onClick={() => setIsProfileOpen(true)} className="bg-white p-1 rounded-full shadow-2xl border-4 border-white hover:scale-110 transition-all ring-2 ring-brand-blue/10">
-                    <AvatarComponent className="w-20 h-20" />
+                <button onClick={() => { setIsProfileOpen(true); setIsEditing(false); }} className="bg-white p-1 rounded-full shadow-soft border-4 border-brand-blue/5">
+                    <AvatarComponent className="w-16 h-16" />
                 </button>
             </header>
 
-            <VigsScoreIndicator />
-            <HealthDataGrid onMetricClick={handleMetricClick} />
+            <h2 className="text-[11px] font-black text-brand-gray-400 uppercase tracking-[0.4em] mb-6 ml-2">Índices Principales</h2>
             
-            {/* --- MODAL DE PERFIL --- */}
-            {isProfileOpen && (
-                <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-brand-gray-900/80 backdrop-blur-md animate-fade-in">
-                    <div className="bg-white w-full max-w-lg h-[85vh] sm:h-auto sm:max-h-[90vh] overflow-y-auto rounded-t-[3rem] sm:rounded-[3rem] shadow-2xl">
-                        <div className="sticky top-0 bg-white/90 backdrop-blur-sm z-10 px-8 py-6 flex justify-between items-center border-b border-brand-gray-50">
-                            <h3 className="text-2xl font-black text-brand-gray-800 tracking-tighter uppercase">Configuración</h3>
-                            <button onClick={() => {setIsProfileOpen(false); setIsEditing(false);}} className="text-brand-gray-300 hover:text-brand-red bg-brand-gray-50 p-3 rounded-full transition-all"><XMarkIcon /></button>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-16">
+                <IndexCard title="Autonomía (VIGS)" onClick={() => handleDetail("Autonomía", "vigs", "VIGS", {min: 0, max: 0.2})} value={vigsScore.index?.toFixed(2) || '0.00'} percent={calculatedIndices.autonomy} description="Independencia funcional." category={vigsScore.category} categoryClass={getVigsColorClass(vigsScore.category)} />
+                <IndexCard title="Protección" onClick={() => handleDetail("Protección", "protection", "%", {min: 75, max: 100})} value={`${calculatedIndices.protection.toFixed(0)}%`} percent={calculatedIndices.protection} inverted description="Resiliencia ante fragilidad." />
+                <IndexCard title="Salud Cardio" onClick={() => handleDetail("Salud Cardio", "cardio", "Pts", {min: 0, max: 25})} value={calculatedIndices.cardio < 30 ? "Óptima" : calculatedIndices.cardio.toFixed(0)} percent={calculatedIndices.cardio} description="Riesgo cardiovascular." />
+                <IndexCard title="Riesgo Caídas" value={calculatedIndices.falls > 10 ? "Atención" : "Bajo"} percent={calculatedIndices.falls} description="Historial de caídas." />
+                <IndexCard title="Score Nutri" value={latestNutriScore || '---'} percent={calculatedIndices.nutrition} customColor={getNutriScoreColor(latestNutriScore)} description="Calidad de la última comida fotografiada." />
+            </div>
+
+            <h2 className="text-[11px] font-black text-brand-gray-400 uppercase tracking-[0.4em] mb-6 ml-2">Constantes del Diario</h2>
+            
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                {diaryOptions.filter(opt => diaryPreferences.includes(opt.id as any)).map((opt, i) => {
+                    const value = healthData[opt.id as keyof HealthData];
+                    const unit = opt.label.match(/\((.*?)\)/)?.[1] || '';
+                    const label = opt.label.replace(/\(.*\)/, '').trim();
+                    const ranges: Record<string, {min: number, max: number}> = {
+                        systolicBP: { min: 90, max: 140 },
+                        diastolicBP: { min: 60, max: 90 },
+                        pulse: { min: 50, max: 100 },
+                        glucose: { min: 70, max: 110 },
+                        oxygenSaturation: { min: 94, max: 100 }
+                    };
+                    return (
+                        <button key={opt.id} onClick={() => handleDetail(label, opt.id, unit, ranges[opt.id])} className="bg-white p-6 rounded-v-large shadow-soft border border-brand-gray-50 flex flex-col justify-between h-36 w-full text-left transition-all hover:bg-brand-gray-50 active:scale-95">
+                            <h3 className="text-[9px] font-black text-brand-gray-400 uppercase tracking-widest leading-none">{label}</h3>
+                            <div className="flex items-baseline gap-1 mt-auto">
+                                <span className="text-3xl font-black text-brand-gray-900 tracking-tighter leading-none">{value ?? '--'}</span>
+                                <span className="text-[10px] font-black text-brand-blue uppercase">{unit}</span>
+                            </div>
+                        </button>
+                    );
+                })}
+            </div>
+
+            {selectedDetail && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-brand-gray-900/60 backdrop-blur-sm">
+                    <div className="bg-white w-full max-w-2xl rounded-v-xl p-8 shadow-soft-lg">
+                        <div className="flex justify-between items-center mb-8">
+                            <h3 className="text-3xl font-black uppercase tracking-tighter">{selectedDetail.label}</h3>
+                            <button onClick={() => setSelectedDetail(null)} className="p-2 bg-brand-gray-100 rounded-full"><XMarkIcon /></button>
                         </div>
-                        
-                        <div className="p-8 space-y-10">
-                            {/* Perfil */}
-                            <div className="flex flex-col items-center gap-6">
-                                <div className="bg-brand-lightblue p-3 rounded-full ring-4 ring-brand-blue/5">
-                                    <AvatarComponent className="w-28 h-28" />
+                        <HistoryChart data={detailHistory} color="#005A9C" unit={selectedDetail.unit} range={selectedDetail.range} />
+                        <div className="mt-8 max-h-48 overflow-y-auto pr-2 space-y-2">
+                            {detailHistory.slice().reverse().map((d, i) => (
+                                <div key={i} className="flex justify-between p-3 bg-brand-gray-50 rounded-xl">
+                                    <span className="text-xs font-bold text-brand-gray-500">{d.date.toLocaleDateString()}</span>
+                                    <span className="text-sm font-black text-brand-gray-900">{d.value.toFixed(1)} <span className="text-[10px] text-brand-blue">{selectedDetail.unit}</span></span>
                                 </div>
-                                {!isEditing ? (
-                                    <div className="text-center w-full">
-                                        <p className="text-3xl font-black text-brand-gray-800 tracking-tight">{profile?.displayName}</p>
-                                        <p className="text-sm font-bold text-brand-gray-400 uppercase tracking-widest mt-1">{profile?.email}</p>
-                                        <button 
-                                            onClick={() => setIsEditing(true)}
-                                            className="mt-6 flex items-center gap-2 px-8 py-3 bg-brand-gray-100 text-brand-gray-700 rounded-full text-xs font-black uppercase tracking-widest hover:bg-brand-blue hover:text-white transition-all mx-auto border-2 border-transparent hover:border-brand-blue"
-                                        >
-                                            <PencilSquareIcon /> Editar Perfil
-                                        </button>
-                                    </div>
-                                ) : (
-                                    <div className="w-full space-y-6 bg-brand-gray-50 p-6 rounded-[2rem] border border-brand-gray-100">
-                                        <div className="space-y-2">
-                                            <label className="text-[10px] font-black text-brand-blue uppercase tracking-widest ml-1">Nombre Completo</label>
-                                            <input type="text" value={editName} onChange={e => setEditName(e.target.value)} className="w-full p-4 bg-white border-2 border-brand-gray-200 rounded-2xl focus:border-brand-blue outline-none font-bold text-lg" />
-                                        </div>
-                                        <div className="grid grid-cols-2 gap-4">
-                                            <div className="space-y-2">
-                                                <label className="text-[10px] font-black text-brand-blue uppercase tracking-widest ml-1">Altura (cm)</label>
-                                                <input type="number" value={editHeight} onChange={e => setEditHeight(e.target.value)} className="w-full p-4 bg-white border-2 border-brand-gray-200 rounded-2xl focus:border-brand-blue outline-none font-bold text-lg" />
-                                            </div>
-                                            <div className="space-y-2">
-                                                <label className="text-[10px] font-black text-brand-blue uppercase tracking-widest ml-1">F. Nacimiento</label>
-                                                <input type="date" value={editBirthDate} onChange={e => setEditBirthDate(e.target.value)} className="w-full p-4 bg-white border-2 border-brand-gray-200 rounded-2xl focus:border-brand-blue outline-none font-bold text-lg" />
-                                            </div>
-                                        </div>
-                                    </div>
-                                )}
-                            </div>
-
-                            <hr className="border-brand-gray-50" />
-
-                            {/* Preferencias */}
-                            <div className="space-y-6">
-                                <h4 className="text-sm font-black text-brand-gray-400 uppercase tracking-[0.2em]">Personalizar mi Diario</h4>
-                                <div className="grid grid-cols-1 gap-3">
-                                    {diaryOptions.map(opt => {
-                                        const isSelected = isEditing ? editDiaryPrefs.includes(opt.id as any) : diaryPreferences.includes(opt.id as any);
-                                        return (
-                                            <button 
-                                                key={opt.id}
-                                                disabled={!isEditing}
-                                                onClick={() => setEditDiaryPrefs(prev => prev.includes(opt.id as any) ? prev.filter(x => x !== opt.id) : [...prev, opt.id as any])}
-                                                className={`flex items-center justify-between p-5 rounded-3xl border-2 transition-all group ${isSelected ? 'border-brand-blue bg-blue-50/50' : 'border-brand-gray-50 bg-white opacity-40'}`}
-                                            >
-                                                <span className={`font-bold text-lg ${isSelected ? 'text-brand-blue' : 'text-brand-gray-400'}`}>{opt.label}</span>
-                                                {isSelected && <CheckCircleIcon className="w-6 h-6 text-brand-blue animate-scale-in" />}
-                                            </button>
-                                        );
-                                    })}
-                                </div>
-                            </div>
-
-                            {/* Acciones Finales */}
-                            <div className="pt-6 space-y-4">
-                                {isEditing ? (
-                                    <button 
-                                        onClick={handleSaveProfile}
-                                        disabled={saveLoading}
-                                        className="w-full bg-brand-green text-white font-black py-6 rounded-[2rem] hover:bg-green-700 transition-all uppercase tracking-widest text-sm shadow-xl flex items-center justify-center gap-3 disabled:bg-brand-gray-300"
-                                    >
-                                        {saveLoading ? <div className="animate-spin h-6 w-6 border-b-2 border-white rounded-full"></div> : "Guardar Ajustes"}
-                                    </button>
-                                ) : (
-                                    <button 
-                                        onClick={() => signOut()}
-                                        className="w-full bg-brand-red/5 text-brand-red font-black py-6 rounded-[2rem] hover:bg-brand-red hover:text-white transition-all uppercase tracking-widest text-sm border-2 border-brand-red/10 active:scale-95"
-                                    >
-                                        Cerrar Sesión Segura
-                                    </button>
-                                )}
-                            </div>
+                            ))}
                         </div>
                     </div>
                 </div>
             )}
 
-            {/* --- MODAL DE HISTORIAL --- */}
-            {selectedMetric && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-brand-gray-900/80 backdrop-blur-md animate-fade-in">
-                    <div className="bg-white p-8 rounded-[3rem] shadow-2xl w-full max-w-lg">
-                        <div className="flex justify-between items-center mb-10">
-                            <div>
-                                <h3 className="text-3xl font-black text-brand-gray-800 tracking-tighter uppercase">{selectedMetric.label}</h3>
-                                <p className="text-[10px] font-black text-brand-blue uppercase tracking-[0.3em] mt-1">Análisis de los últimos 30 días</p>
-                            </div>
-                            <button onClick={() => setSelectedMetric(null)} className="text-brand-gray-300 hover:text-brand-red bg-brand-gray-50 p-3 rounded-full transition-all"><XMarkIcon /></button>
+            {isProfileOpen && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-brand-gray-900/60 backdrop-blur-sm">
+                    <div className="bg-white w-full max-w-md rounded-v-xl p-8 shadow-soft-lg max-h-[90vh] overflow-y-auto">
+                        <div className="flex justify-between mb-8">
+                            <h3 className="text-2xl font-black uppercase tracking-tighter">{isEditing ? "Editar Perfil" : "Mi Perfil"}</h3>
+                            <button onClick={() => setIsProfileOpen(false)}><XMarkIcon /></button>
                         </div>
-                        <HistoryChart data={historyData} unit={selectedMetric.unit} color="#005A9C" referenceRange={RECOMMENDED_RANGES[selectedMetric.key]} />
-                        <button onClick={() => setSelectedMetric(null)} className="w-full mt-10 bg-brand-gray-800 text-white font-black py-6 rounded-[2rem] hover:bg-black transition-all uppercase tracking-widest text-xs shadow-lg">Entendido</button>
+                        
+                        {!isEditing ? (
+                            <div className="flex flex-col items-center">
+                                <AvatarComponent className="w-24 h-24 mb-6" />
+                                <p className="text-2xl font-black mb-1">{profile?.displayName}</p>
+                                <p className="text-brand-gray-400 font-bold text-sm mb-8">{profile?.email}</p>
+                                <div className="w-full grid grid-cols-2 gap-3 mb-8">
+                                    <div className="p-4 bg-brand-gray-50 rounded-2xl">
+                                        <p className="text-[8px] font-black text-brand-gray-400 uppercase tracking-widest mb-1">Tabaquismo</p>
+                                        <p className="text-xs font-black text-brand-blue">{profile?.smokingStatus}</p>
+                                    </div>
+                                    <div className="p-4 bg-brand-gray-50 rounded-2xl">
+                                        <p className="text-[8px] font-black text-brand-gray-400 uppercase tracking-widest mb-1">Altura</p>
+                                        <p className="text-xs font-black text-brand-blue">{profile?.healthData.height} cm</p>
+                                    </div>
+                                </div>
+                                <button onClick={() => setIsEditing(true)} className="w-full py-4 bg-brand-lightblue text-brand-blue font-black rounded-xl mb-4 flex items-center justify-center gap-2 uppercase text-[10px] tracking-widest"><PencilSquareIcon className="w-4 h-4"/> Editar Datos Iniciales</button>
+                                <button onClick={() => signOut()} className="w-full py-4 text-brand-red font-black text-[10px] uppercase tracking-widest border border-brand-soft-red bg-brand-soft-red rounded-xl">Cerrar Sesión</button>
+                            </div>
+                        ) : (
+                            <div className="space-y-6">
+                                <div>
+                                    <label className="text-[10px] font-black text-brand-gray-400 uppercase tracking-widest mb-2 block ml-2">Nombre de Usuario</label>
+                                    <input type="text" value={editName} onChange={e => setEditName(e.target.value)} className="w-full p-4 bg-brand-gray-50 border-2 border-brand-gray-100 rounded-xl font-black focus:border-brand-blue outline-none" />
+                                </div>
+                                <div>
+                                    <label className="text-[10px] font-black text-brand-gray-400 uppercase tracking-widest mb-2 block ml-2">Altura (cm)</label>
+                                    <input type="number" value={editHeight} onChange={e => setEditHeight(e.target.value)} className="w-full p-4 bg-brand-gray-50 border-2 border-brand-gray-100 rounded-xl font-black focus:border-brand-blue outline-none" />
+                                </div>
+                                <div>
+                                    <label className="text-[10px] font-black text-brand-gray-400 uppercase tracking-widest mb-2 block ml-2">Estado Fumador</label>
+                                    <div className="grid grid-cols-1 gap-2">
+                                        {smokingOptions.map(opt => (
+                                            <button key={opt.id} onClick={() => setEditSmoking(opt.id)} className={`p-4 text-left text-[10px] font-black uppercase rounded-xl border-2 transition-all ${editSmoking === opt.id ? 'bg-brand-blue text-white border-brand-blue' : 'bg-white text-brand-gray-600 border-brand-gray-100'}`}>{opt.label}</button>
+                                        ))}
+                                    </div>
+                                </div>
+                                <div className="flex gap-4 pt-4">
+                                    <button onClick={() => setIsEditing(false)} className="flex-1 py-4 bg-brand-gray-100 text-brand-gray-900 rounded-xl font-black text-xs uppercase tracking-widest">Atrás</button>
+                                    <button onClick={handleSaveProfile} className="flex-1 py-4 bg-brand-blue text-white rounded-xl font-black text-xs uppercase tracking-widest shadow-soft">Guardar Todo</button>
+                                </div>
+                            </div>
+                        )}
                     </div>
                 </div>
             )}

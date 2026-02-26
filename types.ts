@@ -13,39 +13,13 @@ export interface HealthData {
 }
 
 export type VigsCategory = 'No frágil' | 'Fragilidad leve' | 'Fragilidad moderada' | 'Fragilidad severa';
+export type SmokingStatus = 'Nunca' | 'Ex-fumador' | 'Activo';
+export type NutriScore = 'A' | 'B' | 'C' | 'D' | 'E';
 
 export interface VigsScore {
   score: number;
   category: VigsCategory;
   index?: number; // El valor decimal (0.00 - 1.00)
-}
-
-// Nueva interfaz para el test VIG completo
-export interface VigsAssessment {
-  ayuda_dinero: boolean;
-  ayuda_telefono: boolean;
-  ayuda_medicacion: boolean;
-  barthel_grado: number;
-  perdida_peso_6m: boolean;
-  deterioro_cognitivo_grado: number;
-  usa_antidepresivos: boolean;
-  usa_psicofarmacos: boolean;
-  vulnerabilidad_social: boolean;
-  presenta_delirium: boolean;
-  caidas_recuentes: boolean;
-  presenta_ulceras: boolean;
-  polifarmacia: boolean;
-  presenta_disfagia: boolean;
-  dolor_control_dificil: boolean;
-  disnea_basal: boolean;
-  enf_oncologica: number;
-  enf_respiratoria: number;
-  enf_cardiaca: number;
-  enf_neurodegenerativa: number;
-  enf_digestiva: number;
-  enf_renal_cronica: number;
-  puntos_totales: number;
-  indice_vig_resultado: number;
 }
 
 export interface Alert {
@@ -54,14 +28,6 @@ export interface Alert {
   title: string;
   message: string;
   isRecommendation?: boolean;
-}
-
-export interface Appointment {
-  id?: string;
-  title: string;
-  description: string;
-  status: 'pending' | 'completed' | 'cancelled';
-  createdAt: Date;
 }
 
 export interface Biomarkers {
@@ -104,6 +70,7 @@ export interface NutritionalAnalysisResult {
     };
     portions: string;
     suggestions: string[];
+    nutriScore?: NutriScore;
 }
 
 export interface ClinicalAnalysis {
@@ -123,7 +90,6 @@ export interface NutritionalAnalysis {
 export interface UserProfile {
     email: string;
     displayName: string;
-    birthDate: string;
     gender: 'male' | 'female' | 'other';
     nationality: string;
     language: string;
@@ -136,4 +102,6 @@ export interface UserProfile {
     healthData: HealthData;
     vigsScore: VigsScore;
     alerts: Alert[];
+    smokingStatus: SmokingStatus;
+    nutritionalScore: number;
 }
