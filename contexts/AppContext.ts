@@ -15,6 +15,8 @@ interface AppContextType {
   setNutritionalAnalyses: React.Dispatch<React.SetStateAction<NutritionalAnalysis[]>>;
   diaryPreferences: (keyof HealthData)[]; // NEW
   setDiaryPreferences: React.Dispatch<React.SetStateAction<(keyof HealthData)[]>>; // NEW
+  predictions: { mortality: number; hospitalization: number; cvRisk: number; fallsRisk: number; lastUpdated?: string };
+  setPredictions: React.Dispatch<React.SetStateAction<{ mortality: number; hospitalization: number; cvRisk: number; fallsRisk: number; lastUpdated?: string }>>;
 }
 
 export const AppContext = createContext<AppContextType | null>(null);

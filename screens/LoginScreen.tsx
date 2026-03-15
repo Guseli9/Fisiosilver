@@ -32,7 +32,7 @@ const LoginScreen: React.FC = () => {
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [personalData, setPersonalData] = useState({ displayName: '', gender: 'male' as const, height: '' });
+  const [personalData, setPersonalData] = useState({ displayName: '', edad: '', gender: 'male' as const, height: '' });
   const [diaryFields, setDiaryFields] = useState<(keyof HealthData)[]>(['weight', 'systolicBP', 'diastolicBP', 'pulse', 'glucose']);
   const [legalData, setLegalData] = useState({ hasLegalConsent: false, dataProcessingConsent: false });
   const [avatarId, setAvatarId] = useState(0);
@@ -65,8 +65,32 @@ const LoginScreen: React.FC = () => {
           case 1: return (
               <div className="space-y-6 animate-fade-in">
                   <h2 className="text-2xl font-black text-brand-gray-900 tracking-tighter uppercase">Su Identidad</h2>
-                  <input type="text" placeholder="Su nombre de usuario" className={inputClass} value={personalData.displayName} onChange={e => setPersonalData({...personalData, displayName: e.target.value})} />
-                  <input type="number" placeholder="Altura en cm (ej. 170)" className={inputClass} value={personalData.height} onChange={e => setPersonalData({...personalData, height: e.target.value})} />
+                  <div>
+                      <label className="text-brand-gray-700 font-medium block mb-1 uppercase text-xs tracking-widest">Nombre y Apellidos</label>
+                      <input type="text" placeholder="Su nombre de usuario" className={inputClass} value={personalData.displayName} onChange={e => setPersonalData({...personalData, displayName: e.target.value})} />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                      <div>
+                          <label className="text-brand-gray-700 font-medium block mb-1 uppercase text-xs tracking-widest">Edad</label>
+                          <input type="number" placeholder="Ej. 75" className={inputClass} value={personalData.edad} onChange={e => setPersonalData({...personalData, edad: e.target.value})} />
+                      </div>
+                      <div>
+                          <label className="text-brand-gray-700 font-medium block mb-1 uppercase text-xs tracking-widest">Altura (cm)</label>
+                          <input type="number" placeholder="Ej. 170" className={inputClass} value={personalData.height} onChange={e => setPersonalData({...personalData, height: e.target.value})} />
+                      </div>
+                  </div>
+                  <div>
+                      <label className="text-brand-gray-700 font-medium block mb-1 uppercase text-xs tracking-widest">Sexo Biológico</label>
+                      <select 
+                        className={inputClass} 
+                        value={personalData.gender} 
+                        onChange={e => setPersonalData({...personalData, gender: e.target.value as any})}
+                      >
+                          <option value="male">Hombre</option>
+                          <option value="female">Mujer</option>
+                          <option value="other">Otro</option>
+                      </select>
+                  </div>
               </div>
           );
           case 2: return (
@@ -116,7 +140,11 @@ const LoginScreen: React.FC = () => {
 
   const handleNext = () => {
       if (step === 0 && (!email || password.length < 6)) { setError("Email válido y contraseña de 6+ caracteres."); return; }
-      if (step === 1 && !personalData.displayName) { setError("Introduzca su nombre de usuario."); return; }
+      if (step === 1) {
+          if (!personalData.displayName) { setError("Introduzca su nombre de usuario."); return; }
+          if (!personalData.edad) { setError("Introduzca su edad."); return; }
+          if (!personalData.height) { setError("Introduzca su altura."); return; }
+      }
       if (step === 4 && (!legalData.hasLegalConsent || !legalData.dataProcessingConsent)) { setError("Debe aceptar los términos."); return; }
       setError(null);
       setStep(s => s + 1);
@@ -128,7 +156,7 @@ const LoginScreen: React.FC = () => {
         const res = await signUp(email, password);
         if (!res) { setError("No se pudo crear la cuenta."); return; }
         await registerUserInDb(res.uid, {
-            email, displayName: personalData.displayName, gender: 'male', nationality: 'Española', language: 'Español', emergencyContactName: '', emergencyContactPhone: '', hasLegalConsent: true, dataProcessingConsent: true, avatarId, diaryPreferences: diaryFields, healthData: { weight: null, falls: null, systolicBP: null, diastolicBP: null, pulse: null, oxygenSaturation: null, glucose: null, calfCircumference: null, abdominalCircumference: null, height: parseFloat(personalData.height) || 170 }, vigsScore: { score: 0, category: 'No frágil' }, alerts: [], smokingStatus, nutritionalScore: 0
+            email, displayName: personalData.displayName, age: parseInt(personalData.edad) || 75, gender: personalData.gender, nationality: 'Española', language: 'Español', emergencyContactName: '', emergencyContactPhone: '', hasLegalConsent: true, dataProcessingConsent: true, avatarId, diaryPreferences: diaryFields, healthData: { weight: null, falls: null, systolicBP: null, diastolicBP: null, pulse: null, oxygenSaturation: null, glucose: null, calfCircumference: null, abdominalCircumference: null, height: parseFloat(personalData.height) || 170 }, vigsScore: { score: 0, category: 'No frágil' }, alerts: [], smokingStatus, nutritionalScore: 0
         });
         setIsRegistering(false);
     } catch (e: any) { setError(e.message); }

@@ -1,8 +1,9 @@
 
-import React, { useContext, useState, useEffect, useMemo } from 'react';
+import React, { useContext, useState, useEffect, useMemo, useCallback } from 'react';
 import { AppContext } from '../contexts/AppContext';
 import { useAuth } from '../contexts/AuthContext';
 import { getDailyHistory, updateUserProfile, getUserProfile, getVigsHistory, getNutritionLogs } from '../services/firestore';
+import { predictMortality, predictHospitalization, predictCVRisk } from '../services/mlService';
 import type { VigsCategory, HealthData, UserProfile, SmokingStatus, NutriScore } from '../types';
 import { XMarkIcon, avatars, PencilSquareIcon, CheckCircleIcon } from '../components/Icons';
 
@@ -118,18 +119,32 @@ const IndexCard: React.FC<{
 
 const HomeScreen: React.FC = () => {
     const { user, signOut } = useAuth();
-    const { healthData, setHealthData, setDiaryPreferences, diaryPreferences, setVigsScore, vigsScore } = useContext(AppContext)!;
+    const { 
+        healthData, setHealthData, 
+        setDiaryPreferences, diaryPreferences, 
+        setVigsScore, vigsScore,
+        predictions, setPredictions,
+        clinicalAnalyses
+    } = useContext(AppContext)!;
     const [profile, setProfile] = useState<UserProfile | null>(null);
     const [isProfileOpen, setIsProfileOpen] = useState(false);
     const [isEditing, setIsEditing] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
     const [latestNutriScore, setLatestNutriScore] = useState<NutriScore | undefined>(undefined);
     
+    const [isLoadingPredictions, setIsLoadingPredictions] = useState(false);
+    const [showDebug, setShowDebug] = useState(false);
+    const [lastFeatures, setLastFeatures] = useState<number[]>([]);
     const [selectedDetail, setSelectedDetail] = useState<{ label: string, key: string, unit: string, range?: {min: number, max: number} } | null>(null);
     const [detailHistory, setDetailHistory] = useState<ChartDataPoint[]>([]);
+    const isRunningPredictionsRef = React.useRef(false);
+
+    const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
     const [editName, setEditName] = useState("");
+    const [editAge, setEditAge] = useState("");
     const [editHeight, setEditHeight] = useState("");
+    const [editGender, setEditGender] = useState<'male' | 'female' | 'other'>("male");
     const [editSmoking, setEditSmoking] = useState<SmokingStatus>("Nunca");
     const [editPrefs, setEditPrefs] = useState<(keyof HealthData)[]>([]);
 
@@ -137,10 +152,19 @@ const HomeScreen: React.FC = () => {
         const vigs = vigsScore.index || (vigsScore.score / 25);
         const sys = healthData.systolicBP || 120;
         const falls = healthData.falls || 0;
+        const calf = healthData.calfCircumference || 34;
+        const edad = profile?.age || 75;
+        
         const smokeFactor = profile?.smokingStatus === 'Activo' ? 20 : profile?.smokingStatus === 'Ex-fumador' ? 5 : 0;
         const prot = Math.max(0, Math.min(100, (1 - vigs) * 100));
         const cvRisk = Math.min(100, ((sys - 110) / 70 * 80) + smokeFactor);
-        const fallRisk = Math.min(100, falls * 33);
+        
+        // --- CÁLCULO MATEMÁTICO RIESGO DE CAÍDAS (Propuesta 1) ---
+        const vigsPoints = vigs * 50;
+        const historyPoints = (falls > 0) ? 20 : 0;
+        const sarcopeniaPoints = (calf < 31) ? 15 : 0;
+        const agePoints = Math.min(10, Math.max(0, (edad - 65) / 30 * 10));
+        const fallRisk = Math.min(100, vigsPoints + historyPoints + sarcopeniaPoints + agePoints);
         
         let nutriPercent = 0;
         if (latestNutriScore === 'A') nutriPercent = 100;
@@ -166,7 +190,9 @@ const HomeScreen: React.FC = () => {
                 setDiaryPreferences(pData.diaryPreferences);
                 setVigsScore(pData.vigsScore);
                 setEditName(pData.displayName);
+                setEditAge(pData.age.toString());
                 setEditHeight(pData.healthData.height?.toString() || "170");
+                setEditGender(pData.gender);
                 setEditSmoking(pData.smokingStatus);
                 setEditPrefs(pData.diaryPreferences);
             }
@@ -178,18 +204,146 @@ const HomeScreen: React.FC = () => {
 
     useEffect(() => { loadProfile(); }, [user]);
 
+    useEffect(() => {
+        console.log("Predictions state updated:", predictions);
+    }, [predictions]);
+
+    const runPredictions = useCallback(async () => {
+        // Evitar re-entrada si ya se está ejecutando
+        if (isRunningPredictionsRef.current) {
+            console.log("Predictions already in progress, skipping...");
+            return;
+        }
+
+        // Permitimos ejecutar si tenemos healthData y vigsScore
+        if (!healthData || !vigsScore) {
+            console.log("Predictions skipped: missing healthData or vigsScore");
+            return;
+        }
+        
+        isRunningPredictionsRef.current = true;
+        setIsLoadingPredictions(true);
+        console.log("--- INICIO PREDICCIÓN IA ---");
+        
+        try {
+            // Verificamos si hay datos reales para predecir. 
+            // Si no hay analíticas ni registros de tensión, devolvemos 0 para no confundir al usuario nuevo.
+            const hasClinicalData = clinicalAnalyses.length > 0;
+            const hasDailyData = healthData.systolicBP !== null || healthData.glucose !== null || healthData.calfCircumference !== null;
+            
+            if (!hasClinicalData && !hasDailyData) {
+                console.log("No real data found, setting predictions to 0");
+                setPredictions({
+                    mortality: 0,
+                    hospitalization: 0,
+                    cvRisk: 0,
+                    fallsRisk: 0,
+                    lastUpdated: new Date().toLocaleTimeString()
+                });
+                return;
+            }
+
+            // Valores por defecto seguros si faltan datos
+            const latestClinical = clinicalAnalyses.length > 0 ? clinicalAnalyses[0].analysis.biomarkers : null;
+            
+            const parseVal = (val: string | undefined | null) => {
+                if (!val || val === '---') return null;
+                const num = parseFloat(val.toString().replace(',', '.'));
+                return isNaN(num) ? null : num;
+            };
+
+            const edad = profile?.age || 75;
+            const vigsIndex = vigsScore.index !== undefined ? vigsScore.index : (vigsScore.score / 25) || 0;
+            const albumin = parseVal(latestClinical?.albumin) || 4.0;
+            const calf = healthData.calfCircumference || 34;
+            const hemoglobin = parseVal(latestClinical?.hemoglobin) || 13.5;
+            const pcr = parseVal(latestClinical?.crp) || 0.5;
+            const vitD = parseVal(latestClinical?.vitaminD) || 30;
+            const creatinine = parseVal(latestClinical?.creatinine) || 0.9;
+            const tas = healthData.systolicBP || 120;
+            const ldl = parseVal(latestClinical?.ldl) || 100;
+            const hba1c = parseVal(latestClinical?.hba1c) || 5.7;
+
+            const features = [
+                edad, vigsIndex, albumin, calf, hemoglobin, pcr, vitD, creatinine, tas, ldl, hba1c
+            ];
+
+            console.log("Features prepared:", {
+                edad, vigsIndex, albumin, calf, hemoglobin, pcr, vitD, creatinine, tas, ldl, hba1c
+            });
+            setLastFeatures(features);
+
+            // Ejecutamos secuencialmente para evitar conflictos de sesión en algunos navegadores
+            const m = await predictMortality(features).catch(err => { console.error("Mortality model failed:", err); return 0; });
+            const h = await predictHospitalization(features).catch(err => { console.error("Hospitalization model failed:", err); return 0; });
+            const cv = await predictCVRisk(features).catch(err => { console.error("CV Risk model failed:", err); return 0; });
+            
+            // --- CÁLCULO MATEMÁTICO RIESGO DE CAÍDAS (Propuesta 1) ---
+            const vigsPoints = vigsIndex * 50;
+            const historyPoints = (healthData.falls && healthData.falls > 0) ? 20 : 0;
+            const sarcopeniaPoints = (healthData.calfCircumference && healthData.calfCircumference < 31) ? 15 : 0;
+            const agePoints = Math.min(10, Math.max(0, (edad - 65) / 30 * 10));
+            const fallsRiskCalc = Math.min(100, vigsPoints + historyPoints + sarcopeniaPoints + agePoints);
+
+            console.log("RAW MODEL OUTPUTS:", { m, h, cv, fallsRiskCalc });
+
+            // Aseguramos que los valores sean coherentes (0-100%)
+            const clamp = (val: number) => {
+                // Si el valor es muy pequeño pero no cero, aseguramos que se vea algo
+                if (val > 0 && val < 0.001) return 0.1;
+                if (val > 1) return Math.min(100, val);
+                return Math.max(0, Math.min(100, val * 100));
+            };
+
+            const newPredictions = {
+                mortality: clamp(m),
+                hospitalization: clamp(h),
+                cvRisk: clamp(cv),
+                fallsRisk: clamp(fallsRiskCalc / 100), // clamp espera 0-1 o 0-100, fallsRiskCalc es 0-100
+                lastUpdated: new Date().toLocaleTimeString()
+            };
+
+            console.log("Setting new predictions:", newPredictions);
+            setPredictions(newPredictions);
+        } catch (e) {
+            console.error("Critical error in prediction pipeline:", e);
+        } finally {
+            isRunningPredictionsRef.current = false;
+            setIsLoadingPredictions(false);
+            console.log("--- FIN PREDICCIÓN IA ---");
+        }
+    }, [healthData, vigsScore, profile, clinicalAnalyses, setPredictions]);
+
+    useEffect(() => {
+        // Ejecutamos si tenemos los datos mínimos, el profile es opcional para el tabaquismo
+        if (healthData && vigsScore) {
+            runPredictions();
+        }
+    }, [runPredictions]);
+
     const handleSaveProfile = async () => {
         if (!user) return;
         try {
+            const ageNum = parseInt(editAge);
+            const heightNum = parseFloat(editHeight.replace(',', '.'));
+            
             await updateUserProfile(user.uid, {
                 displayName: editName,
+                age: isNaN(ageNum) ? 75 : ageNum,
+                gender: editGender,
                 smokingStatus: editSmoking,
                 diaryPreferences: editPrefs,
-                healthData: { ...healthData, height: parseFloat(editHeight) || 170 }
+                healthData: { ...healthData, height: isNaN(heightNum) ? 170 : heightNum }
             });
             await loadProfile();
+            setSuccessMessage("Perfil actualizado correctamente.");
+            setTimeout(() => setSuccessMessage(null), 3000);
             setIsEditing(false);
-        } catch (e) { alert("Error al actualizar perfil."); }
+            setIsProfileOpen(false);
+        } catch (e: any) { 
+            console.error(e);
+            alert("Error al actualizar perfil: " + (e.message || "Error desconocido")); 
+        }
     };
 
     const handleDetail = async (label: string, key: string, unit: string, range?: {min: number, max: number}) => {
@@ -228,14 +382,107 @@ const HomeScreen: React.FC = () => {
                 </button>
             </header>
 
+            {successMessage && (
+                <div className="mb-8 p-4 bg-brand-soft-green text-brand-green rounded-2xl border border-brand-green/10 font-black text-center uppercase text-[10px] tracking-widest animate-fade-in">
+                    {successMessage}
+                </div>
+            )}
+
             <h2 className="text-[11px] font-black text-brand-gray-400 uppercase tracking-[0.4em] mb-6 ml-2">Índices Principales</h2>
             
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-16">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-16">
                 <IndexCard title="Autonomía (VIGS)" onClick={() => handleDetail("Autonomía", "vigs", "VIGS", {min: 0, max: 0.2})} value={vigsScore.index?.toFixed(2) || '0.00'} percent={calculatedIndices.autonomy} description="Independencia funcional." category={vigsScore.category} categoryClass={getVigsColorClass(vigsScore.category)} />
-                <IndexCard title="Protección" onClick={() => handleDetail("Protección", "protection", "%", {min: 75, max: 100})} value={`${calculatedIndices.protection.toFixed(0)}%`} percent={calculatedIndices.protection} inverted description="Resiliencia ante fragilidad." />
-                <IndexCard title="Salud Cardio" onClick={() => handleDetail("Salud Cardio", "cardio", "Pts", {min: 0, max: 25})} value={calculatedIndices.cardio < 30 ? "Óptima" : calculatedIndices.cardio.toFixed(0)} percent={calculatedIndices.cardio} description="Riesgo cardiovascular." />
-                <IndexCard title="Riesgo Caídas" value={calculatedIndices.falls > 10 ? "Atención" : "Bajo"} percent={calculatedIndices.falls} description="Historial de caídas." />
                 <IndexCard title="Score Nutri" value={latestNutriScore || '---'} percent={calculatedIndices.nutrition} customColor={getNutriScoreColor(latestNutriScore)} description="Calidad de la última comida fotografiada." />
+            </div>
+
+            <div className="flex justify-between items-center mb-6 ml-2">
+                <div className="flex flex-col">
+                    <h2 className="text-[11px] font-black text-brand-gray-400 uppercase tracking-[0.4em]">Predicciones de Riesgo (IA)</h2>
+                    {predictions.lastUpdated && (
+                        <span className="text-[8px] font-bold text-brand-gray-400 uppercase tracking-widest mt-1">Actualizado: {predictions.lastUpdated}</span>
+                    )}
+                </div>
+                <div className="flex items-center gap-4">
+                    <button 
+                        onClick={runPredictions} 
+                        disabled={isLoadingPredictions}
+                        className={`text-[9px] font-black uppercase tracking-widest hover:underline disabled:opacity-50 flex items-center gap-2 ${isLoadingPredictions ? 'text-brand-gray-400' : 'text-brand-blue'}`}
+                    >
+                        {isLoadingPredictions && <div className="w-2 h-2 rounded-full bg-brand-blue animate-ping" />}
+                        {isLoadingPredictions ? 'Calculando Riesgos...' : 'Recalcular Predicciones'}
+                    </button>
+                    <button 
+                        onClick={() => setShowDebug(!showDebug)} 
+                        className="text-[9px] font-black text-brand-gray-400 uppercase tracking-widest hover:underline"
+                    >
+                        {showDebug ? 'Ocultar Debug' : 'Ver Inputs'}
+                    </button>
+                </div>
+            </div>
+
+            {showDebug && (
+                <div className="mb-8 p-4 bg-brand-gray-900 text-brand-green font-mono text-[10px] rounded-xl overflow-x-auto">
+                    <div className="flex justify-between items-center mb-4">
+                        <p className="font-black uppercase text-white">Vectores de entrada al modelo (IA - 11 Variables):</p>
+                        <button 
+                            onClick={() => {
+                                setPredictions({
+                                    mortality: Math.random() * 20,
+                                    hospitalization: Math.random() * 40,
+                                    cvRisk: Math.random() * 30,
+                                    fallsRisk: Math.random() * 25,
+                                    lastUpdated: new Date().toLocaleTimeString() + " (Simulado)"
+                                });
+                            }}
+                            className="bg-brand-green text-brand-gray-900 px-2 py-1 rounded font-black uppercase text-[8px]"
+                        >
+                            Simular Cambio UI
+                        </button>
+                    </div>
+                    <div className="grid grid-cols-3 sm:grid-cols-11 gap-2">
+                        {['EDAD', 'VIGS', 'ALB', 'PANT', 'HEMO', 'PCR', 'VITD', 'CREA', 'TAS', 'LDL', 'HBA1C'].map((h, i) => (
+                            <div key={h} className="border border-brand-green/30 p-2 rounded">
+                                <p className="opacity-50">{h}</p>
+                                <p className="text-sm font-black">{lastFeatures[i]?.toFixed(2) || '--'}</p>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
+            
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-16">
+                <IndexCard 
+                    title="Riesgo Mortalidad" 
+                    value={`${predictions.mortality.toFixed(1)}%`} 
+                    percent={predictions.mortality} 
+                    description="Probabilidad de evento fatal a 1 año." 
+                    category={predictions.mortality > 15 ? 'Alto' : predictions.mortality > 5 ? 'Moderado' : 'Bajo'}
+                    categoryClass={predictions.mortality > 15 ? 'text-brand-red bg-brand-soft-red' : predictions.mortality > 5 ? 'text-brand-orange bg-brand-soft-orange' : 'text-brand-green bg-brand-soft-green'}
+                />
+                <IndexCard 
+                    title="Riesgo Hospitalización" 
+                    value={`${predictions.hospitalization.toFixed(1)}%`} 
+                    percent={predictions.hospitalization} 
+                    description="Probabilidad de ingreso hospitalario." 
+                    category={predictions.hospitalization > 30 ? 'Alto' : predictions.hospitalization > 15 ? 'Moderado' : 'Bajo'}
+                    categoryClass={predictions.hospitalization > 30 ? 'text-brand-red bg-brand-soft-red' : predictions.hospitalization > 15 ? 'text-brand-orange bg-brand-soft-orange' : 'text-brand-green bg-brand-soft-green'}
+                />
+                <IndexCard 
+                    title="Riesgo Cardiovascular" 
+                    value={`${predictions.cvRisk.toFixed(1)}%`} 
+                    percent={predictions.cvRisk} 
+                    description="Probabilidad de evento CV mayor." 
+                    category={predictions.cvRisk > 20 ? 'Alto' : predictions.cvRisk > 10 ? 'Moderado' : 'Bajo'}
+                    categoryClass={predictions.cvRisk > 20 ? 'text-brand-red bg-brand-soft-red' : predictions.cvRisk > 10 ? 'text-brand-orange bg-brand-soft-orange' : 'text-brand-green bg-brand-soft-green'}
+                />
+                <IndexCard 
+                    title="Riesgo Caídas (IA)" 
+                    value={`${predictions.fallsRisk.toFixed(1)}%`} 
+                    percent={predictions.fallsRisk} 
+                    description="Probabilidad matemática de caídas." 
+                    category={predictions.fallsRisk > 40 ? 'Alto' : predictions.fallsRisk > 20 ? 'Moderado' : 'Bajo'}
+                    categoryClass={predictions.fallsRisk > 40 ? 'text-brand-red bg-brand-soft-red' : predictions.fallsRisk > 20 ? 'text-brand-orange bg-brand-soft-orange' : 'text-brand-green bg-brand-soft-green'}
+                />
             </div>
 
             <h2 className="text-[11px] font-black text-brand-gray-400 uppercase tracking-[0.4em] mb-6 ml-2">Constantes del Diario</h2>
@@ -297,7 +544,11 @@ const HomeScreen: React.FC = () => {
                                 <AvatarComponent className="w-24 h-24 mb-6" />
                                 <p className="text-2xl font-black mb-1">{profile?.displayName}</p>
                                 <p className="text-brand-gray-400 font-bold text-sm mb-8">{profile?.email}</p>
-                                <div className="w-full grid grid-cols-2 gap-3 mb-8">
+                                <div className="w-full grid grid-cols-3 gap-3 mb-8">
+                                    <div className="p-4 bg-brand-gray-50 rounded-2xl">
+                                        <p className="text-[8px] font-black text-brand-gray-400 uppercase tracking-widest mb-1">Edad</p>
+                                        <p className="text-xs font-black text-brand-blue">{profile?.age} años</p>
+                                    </div>
                                     <div className="p-4 bg-brand-gray-50 rounded-2xl">
                                         <p className="text-[8px] font-black text-brand-gray-400 uppercase tracking-widest mb-1">Tabaquismo</p>
                                         <p className="text-xs font-black text-brand-blue">{profile?.smokingStatus}</p>
@@ -317,8 +568,24 @@ const HomeScreen: React.FC = () => {
                                     <input type="text" value={editName} onChange={e => setEditName(e.target.value)} className="w-full p-4 bg-brand-gray-50 border-2 border-brand-gray-100 rounded-xl font-black focus:border-brand-blue outline-none" />
                                 </div>
                                 <div>
+                                    <label className="text-[10px] font-black text-brand-gray-400 uppercase tracking-widest mb-2 block ml-2">Edad (Años)</label>
+                                    <input type="number" value={editAge} onChange={e => setEditAge(e.target.value)} className="w-full p-4 bg-brand-gray-50 border-2 border-brand-gray-100 rounded-xl font-black focus:border-brand-blue outline-none" />
+                                </div>
+                                <div>
                                     <label className="text-[10px] font-black text-brand-gray-400 uppercase tracking-widest mb-2 block ml-2">Altura (cm)</label>
                                     <input type="number" value={editHeight} onChange={e => setEditHeight(e.target.value)} className="w-full p-4 bg-brand-gray-50 border-2 border-brand-gray-100 rounded-xl font-black focus:border-brand-blue outline-none" />
+                                </div>
+                                <div>
+                                    <label className="text-[10px] font-black text-brand-gray-400 uppercase tracking-widest mb-2 block ml-2">Sexo Biológico</label>
+                                    <select 
+                                        value={editGender} 
+                                        onChange={e => setEditGender(e.target.value as any)}
+                                        className="w-full p-4 bg-brand-gray-50 border-2 border-brand-gray-100 rounded-xl font-black focus:border-brand-blue outline-none"
+                                    >
+                                        <option value="male">Hombre</option>
+                                        <option value="female">Mujer</option>
+                                        <option value="other">Otro</option>
+                                    </select>
                                 </div>
                                 <div>
                                     <label className="text-[10px] font-black text-brand-gray-400 uppercase tracking-widest mb-2 block ml-2">Estado Fumador</label>
@@ -326,6 +593,30 @@ const HomeScreen: React.FC = () => {
                                         {smokingOptions.map(opt => (
                                             <button key={opt.id} onClick={() => setEditSmoking(opt.id)} className={`p-4 text-left text-[10px] font-black uppercase rounded-xl border-2 transition-all ${editSmoking === opt.id ? 'bg-brand-blue text-white border-brand-blue' : 'bg-white text-brand-gray-600 border-brand-gray-100'}`}>{opt.label}</button>
                                         ))}
+                                    </div>
+                                </div>
+                                <div>
+                                    <label className="text-[10px] font-black text-brand-gray-400 uppercase tracking-widest mb-2 block ml-2">Variables del Diario</label>
+                                    <div className="grid grid-cols-1 gap-2">
+                                        {diaryOptions.map(opt => {
+                                            const isSelected = editPrefs.includes(opt.id as any);
+                                            return (
+                                                <button 
+                                                    key={opt.id} 
+                                                    onClick={() => {
+                                                        if (isSelected) {
+                                                            setEditPrefs(editPrefs.filter(p => p !== opt.id));
+                                                        } else {
+                                                            setEditPrefs([...editPrefs, opt.id as any]);
+                                                        }
+                                                    }} 
+                                                    className={`p-4 text-left text-[10px] font-black uppercase rounded-xl border-2 transition-all flex justify-between items-center ${isSelected ? 'bg-brand-lightblue text-brand-blue border-brand-blue' : 'bg-white text-brand-gray-600 border-brand-gray-100'}`}
+                                                >
+                                                    {opt.label}
+                                                    {isSelected && <CheckCircleIcon className="w-4 h-4" />}
+                                                </button>
+                                            );
+                                        })}
                                     </div>
                                 </div>
                                 <div className="flex gap-4 pt-4">

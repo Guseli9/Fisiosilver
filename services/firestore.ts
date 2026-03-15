@@ -27,6 +27,12 @@ const mapProfileToDb = (profile: Partial<UserProfile>) => {
     const dbData: any = {};
     if (profile.email !== undefined) dbData.email = profile.email;
     if (profile.displayName !== undefined) dbData.nombre_usuario = profile.displayName;
+    if (profile.age !== undefined) dbData.edad = profile.age;
+    if (profile.gender !== undefined) dbData.sexo = profile.gender;
+    if (profile.nationality !== undefined) dbData.nacionalidad = profile.nationality;
+    if (profile.language !== undefined) dbData.idioma = profile.language;
+    if (profile.emergencyContactName !== undefined) dbData.contacto_emergencia_nombre = profile.emergencyContactName;
+    if (profile.emergencyContactPhone !== undefined) dbData.contacto_emergencia_telefono = profile.emergencyContactPhone;
     if (profile.avatarId !== undefined) dbData.avatar_id = profile.avatarId;
     if (profile.diaryPreferences !== undefined) dbData.diary_preferences = profile.diaryPreferences;
     if (profile.alerts !== undefined) dbData.alerts_json = profile.alerts;
@@ -44,11 +50,12 @@ const mapDbToProfile = (data: any, latestLog?: any, latestVigs?: any): UserProfi
     return {
         email: data.email || '',
         displayName: data.nombre_usuario || 'Usuario',
-        gender: 'male', 
-        nationality: 'Española',
-        language: 'Español',
-        emergencyContactName: '', 
-        emergencyContactPhone: '', 
+        age: data.edad || 75,
+        gender: data.sexo || 'male', 
+        nationality: data.nacionalidad || 'Española',
+        language: data.idioma || 'Español',
+        emergencyContactName: data.contacto_emergencia_nombre || '', 
+        emergencyContactPhone: data.contacto_emergencia_telefono || '', 
         diaryPreferences: data.diary_preferences || ['weight', 'systolicBP', 'diastolicBP', 'pulse', 'glucose'],
         hasLegalConsent: true,
         dataProcessingConsent: true,
@@ -81,7 +88,7 @@ export const initializeUser = async (uid: string, email: string): Promise<UserPr
     const { data: user } = await supabase.from('users').select('*').eq('id', uid).maybeSingle();
     if (!user) {
         const defaultProfile: UserProfile = {
-            email, displayName: 'Nuevo Usuario', gender: 'male', nationality: 'Española',
+            email, displayName: 'Nuevo Usuario', age: 75, gender: 'male', nationality: 'Española',
             language: 'Español', emergencyContactName: '', emergencyContactPhone: '',
             hasLegalConsent: true, dataProcessingConsent: true, avatarId: 0,
             diaryPreferences: ['weight', 'systolicBP', 'diastolicBP', 'pulse', 'glucose'],
@@ -103,7 +110,8 @@ export const getUserProfile = async (uid: string): Promise<UserProfile | null> =
 export const updateUserProfile = async (uid: string, profile: Partial<UserProfile>): Promise<void> => {
     if (isDemo) return;
     const dbData = mapProfileToDb(profile);
-    const { error } = await supabase.from('users').update(dbData).eq('id', uid);
+    // Usamos upsert para asegurar que la fila existe, especialmente si hubo un error en el registro inicial
+    const { error } = await supabase.from('users').upsert({ id: uid, ...dbData }, { onConflict: 'id' });
     if (error) throw new Error(getErrorMessage(error));
 };
 
@@ -207,7 +215,12 @@ export const getNutritionLogs = async (uid: string): Promise<NutritionalAnalysis
 
 export const uploadFile = async (bucket: string, file: File): Promise<string> => {
     if (isDemo) return URL.createObjectURL(file);
-    const fileName = `${Date.now()}_${file.name}`;
+    // Sanitizar nombre de archivo: eliminar acentos y caracteres especiales
+    const cleanName = file.name
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-zA-Z0-9.]/g, "_");
+    const fileName = `${Date.now()}_${cleanName}`;
     const { error } = await supabase.storage.from(bucket).upload(fileName, file);
     if (error) throw new Error(getErrorMessage(error));
     const { data } = supabase.storage.from(bucket).getPublicUrl(fileName);
@@ -220,6 +233,13 @@ export const saveClinicalReport = async (uid: string, analysis: ClinicalAnalysis
         user_id: uid, file_name: analysis.fileName, resumen_ia: analysis.analysis.summary,
         hemoglobina: parseFloat(analysis.analysis.biomarkers.hemoglobin) || null,
         albumina: parseFloat(analysis.analysis.biomarkers.albumin) || null,
+        vitamina_d_25_oh: parseFloat(analysis.analysis.biomarkers.vitaminD) || null,
+        glucosa: parseFloat(analysis.analysis.biomarkers.glucoseFasting) || null,
+        creatinina: parseFloat(analysis.analysis.biomarkers.creatinine) || null,
+        pcr: parseFloat(analysis.analysis.biomarkers.crp) || null,
+        sodio: parseFloat(analysis.analysis.biomarkers.sodium) || null,
+        tsh: parseFloat(analysis.analysis.biomarkers.tsh) || null,
+        vitamina_b12: parseFloat(analysis.analysis.biomarkers.vitaminB12) || null,
         created_at: analysis.createdAt
     });
     if (error) throw new Error(getErrorMessage(error));
@@ -234,8 +254,18 @@ export const getClinicalReports = async (uid: string): Promise<ClinicalAnalysis[
         analysis: {
             summary: d.resumen_ia || "", recommendations: [],
             biomarkers: {
-                hemoglobin: d.hemoglobina?.toString() || '---', albumin: d.albumina?.toString() || '---',
-                vitaminD: '---', glucoseFasting: '---', egfr: '---', sodium: '---', crp: '---', vitaminB12: '---', tsh: '---', creatinine: '---'
+                hemoglobin: d.hemoglobina?.toString() || '---', 
+                albumin: d.albumina?.toString() || '---',
+                vitaminD: d.vitamina_d_25_oh?.toString() || '---', 
+                glucoseFasting: d.glucosa?.toString() || '---', 
+                egfr: '---', 
+                sodium: d.sodio?.toString() || '---', 
+                crp: d.pcr?.toString() || '---', 
+                vitaminB12: d.vitamina_b12?.toString() || '---', 
+                tsh: d.tsh?.toString() || '---', 
+                creatinine: d.creatinina?.toString() || '---',
+                ldl: '---',
+                hba1c: '---'
             }
         }
     }));

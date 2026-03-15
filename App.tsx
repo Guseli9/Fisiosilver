@@ -20,6 +20,28 @@ const MainApp: React.FC = () => {
   const [activeTab, setActiveTab] = useState<Tab>('home');
   const [isVoiceAssistantOpen, setIsVoiceAssistantOpen] = useState(false);
   const [isLoadingData, setIsLoadingData] = useState(true);
+  const [hasApiKey, setHasApiKey] = useState(false);
+
+  // --- API Key Check ---
+  useEffect(() => {
+    const checkApiKey = async () => {
+      if (window.aistudio) {
+        const selected = await window.aistudio.hasSelectedApiKey();
+        setHasApiKey(selected);
+      } else {
+        // Fallback for local dev if window.aistudio is not present
+        setHasApiKey(true);
+      }
+    };
+    checkApiKey();
+  }, []);
+
+  const handleOpenKeySelector = async () => {
+    if (window.aistudio) {
+      await window.aistudio.openSelectKey();
+      setHasApiKey(true);
+    }
+  };
 
   // --- State Initialization ---
   const [healthData, setHealthData] = useState<HealthData>({
@@ -34,6 +56,7 @@ const MainApp: React.FC = () => {
   const [diaryPreferences, setDiaryPreferences] = useState<(keyof HealthData)[]>([
     'weight', 'systolicBP', 'diastolicBP', 'pulse', 'oxygenSaturation', 'glucose', 'falls', 'calfCircumference', 'abdominalCircumference'
   ]);
+  const [predictions, setPredictions] = useState<{ mortality: number; hospitalization: number; cvRisk: number; fallsRisk: number; lastUpdated?: string }>({ mortality: 0, hospitalization: 0, cvRisk: 0, fallsRisk: 0, lastUpdated: undefined });
 
   // --- Fetch Data ---
   useEffect(() => {
@@ -75,10 +98,34 @@ const MainApp: React.FC = () => {
     alerts, setAlerts,
     clinicalAnalyses, setClinicalAnalyses,
     nutritionalAnalyses, setNutritionalAnalyses,
-    diaryPreferences, setDiaryPreferences, 
-  }), [healthData, vigsScore, alerts, clinicalAnalyses, nutritionalAnalyses, diaryPreferences]);
+    diaryPreferences, setDiaryPreferences,
+    predictions, setPredictions,
+  }), [healthData, vigsScore, alerts, clinicalAnalyses, nutritionalAnalyses, diaryPreferences, predictions]);
 
   const renderContent = () => {
+    if (!hasApiKey) {
+        return (
+            <div className="flex h-full items-center justify-center bg-brand-bg p-8">
+                <div className="max-w-md w-full bg-white p-10 rounded-[2.5rem] shadow-soft text-center border border-brand-gray-100">
+                    <div className="w-20 h-20 bg-brand-blue/10 text-brand-blue rounded-full flex items-center justify-center mx-auto mb-8">
+                        <ClipboardListIcon className="w-10 h-10" />
+                    </div>
+                    <h2 className="text-3xl font-black text-brand-gray-900 tracking-tighter uppercase mb-4">Configuración Requerida</h2>
+                    <p className="text-brand-gray-600 font-bold text-sm mb-10 leading-relaxed">Para utilizar las funciones de Inteligencia Artificial (Análisis de analíticas y nutrición), es necesario configurar una clave de API de Google Cloud.</p>
+                    <button 
+                        onClick={handleOpenKeySelector}
+                        className="w-full bg-brand-blue text-white py-6 rounded-2xl font-black uppercase tracking-widest shadow-soft hover:scale-[1.02] transition-all"
+                    >
+                        Configurar Clave de IA
+                    </button>
+                    <p className="mt-6 text-[10px] font-bold text-brand-gray-400 uppercase tracking-widest">
+                        Consulte la <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" rel="noreferrer" className="text-brand-blue underline">documentación de facturación</a>.
+                    </p>
+                </div>
+            </div>
+        );
+    }
+
     if (isLoadingData) {
         return (
             <div className="flex h-full items-center justify-center bg-brand-bg">

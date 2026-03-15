@@ -49,7 +49,7 @@ const DiaryScreen: React.FC = () => {
         setIsSaving(true);
         const updated: Partial<HealthData> = {};
         Object.keys(formData).forEach(k => {
-            const val = formData[k as keyof HealthData];
+            const val = formData[k as keyof HealthData].replace(',', '.');
             if (val.trim()) updated[k as keyof HealthData] = parseFloat(val);
         });
 

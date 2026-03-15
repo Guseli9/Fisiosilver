@@ -55,7 +55,11 @@ const ClinicalDisplay: React.FC<{ analysis: ClinicalAnalysisResult }> = ({ analy
                     <Biomarker label="Hemoglobina" value={analysis.biomarkers.hemoglobin} />
                     <Biomarker label="Albúmina" value={analysis.biomarkers.albumin} />
                     <Biomarker label="Glucosa" value={analysis.biomarkers.glucoseFasting} />
+                    <Biomarker label="HbA1c" value={analysis.biomarkers.hba1c} />
                     <Biomarker label="Creatinina" value={analysis.biomarkers.creatinine} />
+                    <Biomarker label="LDL" value={analysis.biomarkers.ldl} />
+                    <Biomarker label="PCR" value={analysis.biomarkers.crp} />
+                    <Biomarker label="Vitamina D" value={analysis.biomarkers.vitaminD} />
                 </div>
             </Card>
 

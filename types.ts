@@ -41,6 +41,8 @@ export interface Biomarkers {
     vitaminB12: string;
     tsh: string;
     creatinine: string;
+    ldl: string;
+    hba1c: string;
 }
 
 export interface ClinicalAnalysisResult {
@@ -90,6 +92,7 @@ export interface NutritionalAnalysis {
 export interface UserProfile {
     email: string;
     displayName: string;
+    age: number;
     gender: 'male' | 'female' | 'other';
     nationality: string;
     language: string;
@@ -104,4 +107,13 @@ export interface UserProfile {
     alerts: Alert[];
     smokingStatus: SmokingStatus;
     nutritionalScore: number;
+}
+
+declare global {
+  interface Window {
+    aistudio: {
+      hasSelectedApiKey: () => Promise<boolean>;
+      openSelectKey: () => Promise<void>;
+    };
+  }
 }
