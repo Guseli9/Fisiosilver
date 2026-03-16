@@ -12,6 +12,7 @@ import VoiceAssistantScreen from './screens/VoiceAssistantScreen';
 import LoginScreen from './screens/LoginScreen';
 import { HomeIcon, BookOpenIcon, ClipboardListIcon, DocumentTextIcon, AppleIcon, MicrophoneIcon } from './components/Icons';
 import { initializeUser, getClinicalReports, getNutritionLogs } from './services/firestore';
+import { Analytics } from '@vercel/analytics/react';
 
 type Tab = 'home' | 'diary' | 'frailty' | 'clinical' | 'nutrition';
 
@@ -216,6 +217,7 @@ const App: React.FC = () => {
     return (
         <AuthProvider>
             <AuthGate />
+            <Analytics />
         </AuthProvider>
     );
 };

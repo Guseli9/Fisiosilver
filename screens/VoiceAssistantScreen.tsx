@@ -77,7 +77,7 @@ const VoiceAssistantScreen: React.FC<{ onClose: () => void }> = ({ onClose }) =>
             await inputAudioContextRef.current.resume();
             await outputAudioContextRef.current.resume();
 
-            const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+            const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
             const sessionPromise = ai.live.connect({
                 model: 'gemini-2.5-flash-native-audio-preview-12-2025',
