@@ -15,6 +15,7 @@ const getApiKeys = (): string[] =>
     process.env.GEMINI_API_KEY,
     process.env.GEMINI_API_KEY_SECONDARY,
     process.env.GEMINI_API_KEY_TERTIARY,
+    process.env.GEMINI_API_KEY_QUATERNARY,
   ].filter(Boolean) as string[];
 
 /** Elimina bloques de código markdown de la respuesta de la IA */
