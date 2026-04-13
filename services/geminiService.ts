@@ -248,22 +248,53 @@ export const generateDailySummary = async (
   const bmi = healthData.weight ? (healthData.weight / (heightM * heightM)).toFixed(1) : 'N/D';
 
   const prompt = `
-    Eres un médico geriatra cálido. Tu paciente es ${profile.displayName}, de ${profile.age} años.
-    Datos: Peso ${healthData.weight ?? 'N/D'}kg (IMC ${bmi}), Tensión ${healthData.systolicBP ?? 'N/D'}/${healthData.diastolicBP ?? 'N/D'}, Pulso ${healthData.pulse ?? 'N/D'}, Glucosa ${healthData.glucose ?? 'N/D'}.
-    VIGS: ${vigsScore.index}. Analíticas: ${JSON.stringify(latestBiomarkers || 'N/D')}. Comidas: ${recentMeals.join(', ')}.
+    Eres un médico geriatra cálido y empático. Tu paciente es ${profile.displayName}, de ${profile.age} años.
     
-    Genera 5 tarjetas en "highlights": Hidratación, Actividad Física, Descanso, Nutrición/Salud, Alimentación Equilibrada.
-    Responde SOLO JSON con greeting, narrative, mood, highlights y quickTip.
+    DATOS DEL PACIENTE:
+    - Peso: ${healthData.weight ?? 'N/D'}kg (IMC: ${bmi})
+    - Tensión: ${healthData.systolicBP ?? 'N/D'}/${healthData.diastolicBP ?? 'N/D'} mmHg
+    - Pulso: ${healthData.pulse ?? 'N/D'} lpm, Azúcar: ${healthData.glucose ?? 'N/D'} mg/dL
+    - Fragilidad (VIGS): ${vigsScore.index}
+    - Analíticas: ${JSON.stringify(latestBiomarkers || 'Sin datos')}
+    - Comidas: ${recentMeals.join(', ') || 'Sin registros'}
+
+    INSTRUCCIONES:
+    Genera un informe de salud diario.
+    1. Greeting: Saludo cariñoso.
+    2. Narrative: Resumen de 3-4 frases sobre cómo está hoy.
+    3. Mood: Una de estas: "great", "good", "okay", "watch".
+    4. Highlights: EXACTAMENTE 5 objetos con:
+       - label: "Hidratación", "Actividad Física", "Descanso", "Nutrición/Salud" o "Alimentación Equilibrada".
+       - status: "positive", "neutral" o "warning".
+       - detail: Un consejo corto y específico de qué hacer hoy basado en sus datos.
+    5. QuickTip: Un consejo "maestro" final.
+
+    RESPONDE ÚNICAMENTE CON ESTE FORMATO JSON:
+    {
+      "greeting": "...",
+      "narrative": "...",
+      "mood": "...",
+      "highlights": [
+        { "label": "Hidratación", "status": "...", "detail": "..." },
+        { "label": "Actividad Física", "status": "...", "detail": "..." },
+        { "label": "Descanso", "status": "...", "detail": "..." },
+        { "label": "Nutrición/Salud", "status": "...", "detail": "..." },
+        { "label": "Alimentación Equilibrada", "status": "...", "detail": "..." }
+      ],
+      "quickTip": "..."
+    }
   `;
 
   // 1. PRIORIDAD: GROQ
   try {
     console.log("[IA] Solicitando resumen a Groq (Prioridad 1)...");
     const result = await callGroqText(prompt);
+    console.log("[IA] Respuesta RAW de Groq:", result); // Log para depurar
     const parsed = JSON.parse(cleanJsonResponse(result));
-    if (parsed?.greeting) return parsed;
+    if (parsed?.highlights) return parsed;
+    throw new Error("Formato de highlights incorrecto");
   } catch (err: any) {
-    console.warn("[IA] Groq falló en resumen:", err.message);
+    console.warn("[IA] Groq falló o devolvió JSON incompleto:", err.message);
   }
 
   // 2. FALLBACK: GEMINI (ROTACIÓN)
