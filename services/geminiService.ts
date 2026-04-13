@@ -7,7 +7,7 @@ import type { ClinicalAnalysisResult, NutritionalAnalysisResult, HealthData, Vig
 const GEMINI_MODEL = 'gemini-2.5-flash';
 const GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
 
-const GROQ_MODEL_TEXT = 'llama-3.3-70b-versatile';
+const GROQ_MODEL_TEXT = 'llama-3.1-8b-instant'; // Modelo de bajo consumo y alta velocidad
 const GROQ_MODEL_VISION = 'llama-3.2-11b-vision-preview';
 const GROQ_BASE_URL = 'https://api.groq.com/openai/v1/chat/completions';
 
@@ -20,66 +20,85 @@ const getGeminiKeys = (): string[] =>
     process.env.GEMINI_API_KEY_QUATERNARY,
   ].filter(Boolean) as string[];
 
+/** Devuelve las claves de Groq configuradas */
+const getGroqKeys = (): string[] =>
+  [
+    process.env.GROQ_API_KEY,
+    process.env.GROQ_API_KEY_SECONDARY,
+  ].filter(Boolean) as string[];
+
 /** Elimina bloques de código markdown de la respuesta de la IA */
 const cleanJsonResponse = (text: string): string =>
   text.replace(/```json/g, '').replace(/```/g, '').trim();
 
 // ═══════════════════════════════════════════════════════
-// NÚCLEO GROQ: Llamadas REST
+// NÚCLEO GROQ: Llamadas REST con rotación de claves
 // ═══════════════════════════════════════════════════════
 
 const callGroqText = async (prompt: string): Promise<string> => {
-  const key = process.env.GROQ_API_KEY;
-  if (!key) throw new Error("GROQ_API_KEY no configurada");
+  const keys = getGroqKeys();
+  if (keys.length === 0) throw new Error("No hay claves de Groq configuradas");
 
-  const response = await fetch(GROQ_BASE_URL, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${key}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      model: GROQ_MODEL_TEXT,
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0.1,
-      response_format: { type: "json_object" }
-    })
-  });
+  let lastError: any = null;
 
-  const data = await response.json();
-  if (data.error) throw new Error(`Groq Error: ${data.error.message}`);
-  return data.choices?.[0]?.message?.content || "";
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[i];
+    const label = `Groq Clave ${i+1}/${keys.length}`;
+    try {
+      const response = await fetch(GROQ_BASE_URL, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: GROQ_MODEL_TEXT,
+          messages: [{ role: 'user', content: prompt }],
+          temperature: 0.1,
+          response_format: { type: "json_object" }
+        })
+      });
+
+      const data = await response.json();
+      if (data.error) {
+        console.warn(`[IA] ${label} → Error: ${data.error.message}`);
+        lastError = data.error;
+        if (data.error.code === 'rate_limit_exceeded') continue;
+        throw new Error(data.error.message);
+      }
+      return data.choices?.[0]?.message?.content || "";
+    } catch (err) {
+      lastError = err;
+      continue;
+    }
+  }
+  throw lastError || new Error("Fallo en todas las claves de Groq");
 };
 
 const callGroqWithImage = async (prompt: string, base64: string, mimeType: string): Promise<string> => {
-  const key = process.env.GROQ_API_KEY;
-  if (!key) throw new Error("GROQ_API_KEY no configurada");
+  const keys = getGroqKeys();
+  if (keys.length === 0) throw new Error("No hay claves de Groq configuradas");
 
-  const response = await fetch(GROQ_BASE_URL, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${key}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      model: GROQ_MODEL_VISION,
-      messages: [
-        {
-          role: 'user',
-          content: [
-            { type: "text", text: prompt },
-            { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64}` } }
-          ]
-        }
-      ],
-      temperature: 0.1,
-      response_format: { type: "json_object" }
-    })
-  });
-
-  const data = await response.json();
-  if (data.error) throw new Error(`Groq Vision Error: ${data.error.message}`);
-  return data.choices?.[0]?.message?.content || "";
+  for (let key of keys) {
+    try {
+      const response = await fetch(GROQ_BASE_URL, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: GROQ_MODEL_VISION,
+          messages: [{
+            role: 'user',
+            content: [
+              { type: "text", text: prompt },
+              { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64}` } }
+            ]
+          }],
+          temperature: 0.1,
+          response_format: { type: "json_object" }
+        })
+      });
+      const data = await response.json();
+      if (!data.error) return data.choices?.[0]?.message?.content || "";
+    } catch (err) { continue; }
+  }
+  throw new Error("Fallo en Groq Vision");
 };
 
 // ═══════════════════════════════════════════════════════
@@ -90,13 +109,9 @@ const callGemini = async (payload: object): Promise<any> => {
   const keys = getGeminiKeys();
   if (keys.length === 0) throw new Error('No hay claves de Gemini configuradas');
 
-  let lastError: Error = new Error('Todas las claves de Gemini han fallado.');
-
   for (let i = 0; i < keys.length; i++) {
     const key = keys[i];
-    const keyLabel = `Gemini Clave ${i + 1}/${keys.length}`;
     try {
-      console.log(`[IA] Intentando ${keyLabel}...`);
       const response = await fetch(`${GEMINI_BASE_URL}/${GEMINI_MODEL}:generateContent?key=${key}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -105,28 +120,17 @@ const callGemini = async (payload: object): Promise<any> => {
 
       const data = await response.json();
       if (data.error) {
-        const { code, message: msg } = data.error;
-        console.warn(`[IA] ${keyLabel} → Error ${code}: ${msg}`);
-        
-        if (code === 503 || msg.toLowerCase().includes('demand') || msg.toLowerCase().includes('overload')) {
+        if (data.error.code === 503 || data.error.message.includes('demand')) {
           await new Promise(r => setTimeout(r, 1500)); continue;
         }
-        if (code === 429) continue;
         continue;
       }
-
       const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
       if (!text) continue;
-
-      const parsed = JSON.parse(cleanJsonResponse(text));
-      console.log(`[IA] ✅ ${keyLabel} respondió correctamente.`);
-      return parsed;
-    } catch (err: any) {
-      lastError = err;
-      continue;
-    }
+      return JSON.parse(cleanJsonResponse(text));
+    } catch (err) { continue; }
   }
-  throw lastError;
+  throw new Error("Fallo en todas las claves de Gemini");
 };
 
 // ═══════════════════════════════════════════════════════
@@ -179,50 +183,28 @@ export const analyzeClinicalReport = async (file: File): Promise<ClinicalAnalysi
   const prompt = `Analiza este informe médico para un anciano de forma pedagógica. Responde SOLO JSON: { "summary": "...", "biomarkers": { "hemoglobin": "...", ... }, "recommendations": ["..."] }`;
   const mimeType = getEffectiveMimeType(file);
   const base64 = await fileToBase64(file);
-
-  try {
-    return await callGemini({ contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType, data: base64 } }] }] });
-  } catch {
-    console.log("[IA] Gemini Vision falló, intentando Groq Vision...");
-    const res = await callGroqWithImage(prompt, base64, mimeType);
-    return JSON.parse(cleanJsonResponse(res));
-  }
+  try { return await callGemini({ contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType, data: base64 } }] }] }); }
+  catch { const res = await callGroqWithImage(prompt, base64, mimeType); return JSON.parse(cleanJsonResponse(res)); }
 };
 
 export const analyzeClinicalText = async (text: string): Promise<ClinicalAnalysisResult> => {
   const prompt = `Analiza este texto médico para un anciano. Responde SOLO JSON con summary, biomarkers y recommendations. TEXTO: ${text}`;
-  try {
-    return await callGemini({ contents: [{ parts: [{ text: prompt }] }] });
-  } catch {
-    const res = await callGroqText(prompt);
-    return JSON.parse(cleanJsonResponse(res));
-  }
+  try { return await callGemini({ contents: [{ parts: [{ text: prompt }] }] }); }
+  catch { const res = await callGroqText(prompt); return JSON.parse(cleanJsonResponse(res)); }
 };
 
 export const analyzeFoodPhoto = async (file: File): Promise<NutritionalAnalysisResult> => {
   const prompt = `Analiza esta comida para un anciano de forma pedagógica. Responde SOLO JSON con calories, nutriScore, nutritionScores, macros, micros, portions (comentario pedagógico), suggestions (3 consejos).`;
   const mimeType = getEffectiveMimeType(file);
   const base64 = await fileToBase64(file);
-
-  try {
-    return await callGemini({ contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType, data: base64 } }] }] });
-  } catch {
-    console.log("[IA] Gemini Vision falló, intentando Groq Vision...");
-    const res = await callGroqWithImage(prompt, base64, mimeType);
-    return JSON.parse(cleanJsonResponse(res));
-  }
+  try { return await callGemini({ contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType, data: base64 } }] }] }); }
+  catch { const res = await callGroqWithImage(prompt, base64, mimeType); return JSON.parse(cleanJsonResponse(res)); }
 };
 
 export const generateHealthRecommendations = async (healthData: HealthData, vigsScore: VigsScore) => {
   const prompt = `Genera 3 recomendaciones de salud empáticas para un anciano basándote en estos datos: ${JSON.stringify(healthData)} y fragilidad VIGS: ${JSON.stringify(vigsScore)}. Responde SOLO JSON: { "recommendations": [{ "title": "...", "justification": "...", "step": "..." }] }`;
-  try {
-    const data = await callGemini({ contents: [{ parts: [{ text: prompt }] }] });
-    return data.recommendations || [];
-  } catch {
-    const res = await callGroqText(prompt);
-    const parsed = JSON.parse(cleanJsonResponse(res));
-    return parsed.recommendations || [];
-  }
+  try { return await callGemini({ contents: [{ parts: [{ text: prompt }] }] }); }
+  catch { const res = await callGroqText(prompt); const parsed = JSON.parse(cleanJsonResponse(res)); return parsed.recommendations || []; }
 };
 
 // ═══════════════════════════════════════════════════════
@@ -238,77 +220,45 @@ export interface DailySummary {
 }
 
 export const generateDailySummary = async (
-  profile: UserProfile,
-  healthData: HealthData,
-  vigsScore: VigsScore,
-  recentMeals: string[],
-  latestBiomarkers: Record<string, string> | null
+  profile: UserProfile, healthData: HealthData, vigsScore: VigsScore, recentMeals: string[], latestBiomarkers: Record<string, string> | null
 ): Promise<DailySummary | null> => {
   const heightM = (profile.healthData?.height || 170) / 100;
   const bmi = healthData.weight ? (healthData.weight / (heightM * heightM)).toFixed(1) : 'N/D';
 
   const prompt = `
     Eres un médico geriatra cálido y empático. Tu paciente es ${profile.displayName}, de ${profile.age} años.
-    
-    DATOS DEL PACIENTE:
-    - Peso: ${healthData.weight ?? 'N/D'}kg (IMC: ${bmi})
-    - Tensión: ${healthData.systolicBP ?? 'N/D'}/${healthData.diastolicBP ?? 'N/D'} mmHg
-    - Pulso: ${healthData.pulse ?? 'N/D'} lpm, Azúcar: ${healthData.glucose ?? 'N/D'} mg/dL
-    - Fragilidad (VIGS): ${vigsScore.index}
-    - Analíticas: ${JSON.stringify(latestBiomarkers || 'Sin datos')}
-    - Comidas: ${recentMeals.join(', ') || 'Sin registros'}
+    DATOS: Peso ${healthData.weight ?? 'N/D'}kg (IMC: ${bmi}), Tensión ${healthData.systolicBP ?? 'N/D'}/${healthData.diastolicBP ?? 'N/D'} mmHg, Pulso ${healthData.pulse ?? 'N/D'} lpm, Azúcar ${healthData.glucose ?? 'N/D'} mg/dL, Fragilidad (VIGS) ${vigsScore.index}, Analíticas ${JSON.stringify(latestBiomarkers || 'Sin datos')}, Comidas ${recentMeals.join(', ')}.
 
     INSTRUCCIONES:
-    Genera un informe de salud diario.
     1. Greeting: Saludo cariñoso.
-    2. Narrative: Resumen de 3-4 frases sobre cómo está hoy.
-    3. Mood: Una de estas: "great", "good", "okay", "watch".
-    4. Highlights: EXACTAMENTE 5 objetos con:
-       - label: "Hidratación", "Actividad Física", "Descanso", "Nutrición/Salud" o "Alimentación Equilibrada".
-       - status: "positive", "neutral" o "warning".
-       - detail: Un consejo corto y específico de qué hacer hoy basado en sus datos.
-    5. QuickTip: Un consejo "maestro" final.
+    2. Narrative: Resumen de 3-4 frases.
+    3. Mood: "great", "good", "okay", o "watch".
+    4. Highlights: EXACTAMENTE 5 objetos con label ("Hidratación", "Actividad Física", "Descanso", "Nutrición/Salud", "Alimentación Equilibrada"), status ("positive", "neutral", "warning") y detail.
+    5. QuickTip: Consejo final.
 
-    RESPONDE ÚNICAMENTE CON ESTE FORMATO JSON:
-    {
-      "greeting": "...",
-      "narrative": "...",
-      "mood": "...",
-      "highlights": [
-        { "label": "Hidratación", "status": "...", "detail": "..." },
-        { "label": "Actividad Física", "status": "...", "detail": "..." },
-        { "label": "Descanso", "status": "...", "detail": "..." },
-        { "label": "Nutrición/Salud", "status": "...", "detail": "..." },
-        { "label": "Alimentación Equilibrada", "status": "...", "detail": "..." }
-      ],
-      "quickTip": "..."
-    }
+    RESPONDE SOLO EN JSON:
+    { "greeting": "...", "narrative": "...", "mood": "...", "highlights": [{ "label": "...", "status": "...", "detail": "..." }], "quickTip": "..." }
   `;
 
-  // 1. PRIORIDAD: GROQ
+  // 1. PRIORIDAD: GROQ (CON ROTACIÓN)
   try {
-    console.log("[IA] Solicitando resumen a Groq (Prioridad 1)...");
+    console.log("[IA] Solicitando resumen a Groq (Prioridad 1 con rotación)...");
     const result = await callGroqText(prompt);
-    console.log("[IA] Respuesta RAW de Groq:", result); // Log para depurar
+    console.log("[IA] Respuesta RAW de Groq:", result);
     const parsed = JSON.parse(cleanJsonResponse(result));
     if (parsed?.highlights) return parsed;
-    throw new Error("Formato de highlights incorrecto");
-  } catch (err: any) {
-    console.warn("[IA] Groq falló o devolvió JSON incompleto:", err.message);
-  }
+  } catch (err: any) { console.warn("[IA] Groq falló en resumen:", err.message); }
 
-  // 2. FALLBACK: GEMINI (ROTACIÓN)
+  // 2. FALLBACK: GEMINI (ROTACIÓN 4 CLAVES)
   try {
-    console.log("[IA] Solicitando resumen a Gemini (Prioridad 2)...");
+    console.log("[IA] Solicitando resumen a Gemini (Prioridad 2 con 4 claves)...");
     return await callGemini({ contents: [{ parts: [{ text: prompt }] }] });
-  } catch (err: any) {
-    console.error('[IA] Falló la generación del resumen:', err.message);
-  }
+  } catch (err: any) { console.error('[IA] Falló la generación del resumen:', err.message); }
 
   // 3. FALLBACK ESTÁTICO
   return {
     greeting: `Hola, ${profile.displayName}`,
-    narrative: 'Los servicios de IA están temporalmente saturados. Tus datos están a salvo. Inténtalo de nuevo en unos minutos.',
+    narrative: 'Los servicios de IA están temporalmente saturados. Tus datos están a salvo.',
     mood: 'okay',
     highlights: [
       { label: 'Hidratación', status: 'neutral', detail: 'Recuerda beber agua con frecuencia.' },
