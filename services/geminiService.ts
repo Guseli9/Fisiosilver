@@ -33,9 +33,12 @@ const getGroqKeys = (): string[] => {
   return keys;
 };
 
-/** Elimina bloques de código markdown de la respuesta de la IA */
-const cleanJsonResponse = (text: string): string =>
-  text.replace(/```json/g, '').replace(/```/g, '').trim();
+/** Extrae y limpia el JSON de una respuesta de la IA que puede contener texto explicativo */
+const cleanJsonResponse = (text: string): string => {
+  const jsonMatch = text.match(/\{[\s\S]*\}/);
+  if (jsonMatch) return jsonMatch[0];
+  return text.replace(/```json/g, '').replace(/```/g, '').trim();
+};
 
 // ═══════════════════════════════════════════════════════
 // NÚCLEO GROQ: Llamadas REST con rotación de claves
@@ -65,12 +68,15 @@ const callGroqText = async (prompt: string): Promise<string> => {
       const data = await response.json();
       if (data.error) {
         console.warn(`[IA] ${label} → Error: ${data.error.message}`);
-        lastError = data.error;
-        if (data.error.code === 'rate_limit_exceeded') continue;
-        throw new Error(data.error.message);
+        lastError = new Error(data.error.message);
+        // Continuamos con la siguiente clave ante cualquier error de la API (rate limit, quota, etc.)
+        continue;
       }
-      return data.choices?.[0]?.message?.content || "";
+      const content = data.choices?.[0]?.message?.content;
+      if (!content) throw new Error("Respuesta vacía de Groq");
+      return content;
     } catch (err) {
+      console.warn(`[IA] Fallo en ${label}:`, err);
       lastError = err;
       continue;
     }
@@ -234,17 +240,24 @@ export const generateDailySummary = async (
 
   const prompt = `
     Eres un médico geriatra cálido y empático. Tu paciente es ${profile.displayName}, de ${profile.age} años.
-    DATOS: Peso ${healthData.weight ?? 'N/D'}kg (IMC: ${bmi}), Tensión ${healthData.systolicBP ?? 'N/D'}/${healthData.diastolicBP ?? 'N/D'} mmHg, Pulso ${healthData.pulse ?? 'N/D'} lpm, Azúcar ${healthData.glucose ?? 'N/D'} mg/dL, Fragilidad (VIGS) ${vigsScore.index}, Analíticas ${JSON.stringify(latestBiomarkers || 'Sin datos')}, Comidas ${recentMeals.join(', ')}.
+    DATOS ACTUALES: 
+    - Peso: ${healthData.weight ?? 'Sin datos'} kg (IMC: ${bmi})
+    - Tensión: ${healthData.systolicBP ?? '---'}/${healthData.diastolicBP ?? '---'} mmHg
+    - Pulso: ${healthData.pulse ?? '---'} lpm
+    - Azúcar: ${healthData.glucose ?? '---'} mg/dL
+    - Fragilidad (VIGS): ${vigsScore.index ?? 'No evaluado'}
+    - Analíticas Recientes: ${latestBiomarkers ? JSON.stringify(latestBiomarkers) : 'No hay analíticas registradas aún'}
+    - Comidas de hoy: ${recentMeals.length > 0 ? recentMeals.join(', ') : 'No se han registrado comidas todavía'}.
 
     INSTRUCCIONES:
-    1. Greeting: Saludo cariñoso.
-    2. Narrative: Resumen de 3-4 frases sobre su estado general.
-    3. AnalyticsSummary: Un resumen de 2 frases MÁXIMO analizando sus analíticas actuales (biomarcadores). Explica qué valor destaca o si todo está en orden de forma sencilla.
+    1. Greeting: Saludo cariñoso y breve.
+    2. Narrative: Resumen de 2-3 frases sobre su estado general actual basándote en los números. Si faltan datos, sé precavido.
+    3. AnalyticsSummary: Un resumen muy breve (1 frase) sobre sus analíticas. Si no hay, indica que sería bueno subir una pronto.
     4. Mood: "great", "good", "okay", o "watch".
-    5. Highlights: EXACTAMENTE 5 objetos con label ("Hidratación", "Actividad Física", "Descanso", "Nutrición/Salud", "Alimentación Equilibrada"), status ("positive", "neutral", "warning") y detail.
-    6. QuickTip: Consejo final.
+    5. Highlights: EXACTAMENTE 5 objetos con label ("Hidratación", "Actividad Física", "Descanso", "Nutrición/Salud", "Alimentación Equilibrada"), status ("positive", "neutral", "warning") y un detail breve orientado a motivar.
+    6. QuickTip: Un consejo de salud breve y específico.
 
-    RESPONDE SOLO EN JSON:
+    RESPONDE ÚNICAMENTE EN FORMATO JSON:
     { 
       "greeting": "...", 
       "narrative": "...", 

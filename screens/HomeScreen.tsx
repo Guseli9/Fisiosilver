@@ -294,10 +294,10 @@ const HomeScreen: React.FC = () => {
                 console.log("[CACHE] Resumen cargado del almacenamiento local.");
             } catch {}
         }
-    }, [user]);
+    }, [user.uid]);
 
     // Función manual para generar el resumen
-    const handleGenerateSummary = async () => {
+    const handleGenerateSummary = useCallback(async () => {
         if (isLoadingSummary || isLoading || !profile || !user) return;
 
         // Generamos el hash actual para guardarlo junto al resumen
@@ -317,10 +317,8 @@ const HomeScreen: React.FC = () => {
         ].join('|');
 
         // CALCULAMOS LOS ÚLTIMOS VALORES CONOCIDOS (Merging history)
-        // Recorremos el historial para encontrar el último valor no nulo de cada parámetro
         const latestKnownValues: HealthData = { ...healthData };
         if (dailyHistory.length > 0) {
-            // El historial viene ordenado por fecha desc (asumimos) o lo ordenamos
             const sortedHistory = [...dailyHistory].sort((a, b) => 
                 (b.createdAt?.getTime?.() || 0) - (a.createdAt?.getTime?.() || 0)
             );
@@ -340,7 +338,7 @@ const HomeScreen: React.FC = () => {
             });
         }
 
-        console.log("[IA] Analizando últimos valores conocidos:", latestKnownValues);
+        console.log("[IA] Solicitando nuevo resumen técnico...");
         setIsLoadingSummary(true);
         try {
             const biomarkers = clinicalAnalyses.length > 0 ? clinicalAnalyses[0].analysis.biomarkers as unknown as Record<string, string> : null;
@@ -348,7 +346,6 @@ const HomeScreen: React.FC = () => {
             
             if (summary) {
                 setDailySummary(summary);
-                // Siempre guardamos con timestamp para garantizar frescura en actualizaciones manuales
                 localStorage.setItem(`summaryHash_v2_${user.uid}`, `manual_${Date.now()}`);
                 localStorage.setItem(`dailySummary_v2_${user.uid}`, JSON.stringify(summary));
             } else {
@@ -360,7 +357,15 @@ const HomeScreen: React.FC = () => {
         } finally {
             setIsLoadingSummary(false);
         }
-    };
+    }, [user, profile, healthData, vigsScore, clinicalAnalyses, nutritionalAnalyses, dailyHistory, recentMealDescriptions, isLoadingSummary, isLoading]);
+
+    // PASO 2: Generación automática si hay datos pero no hay resumen
+    useEffect(() => {
+        if (user && hasRealData && !dailySummary && !isLoadingSummary && profile) {
+            console.log("[IA] Detectados datos reales sin resumen. Generando automáticamente...");
+            handleGenerateSummary();
+        }
+    }, [user, hasRealData, dailySummary, isLoadingSummary, profile, handleGenerateSummary]);
 
     useEffect(() => {
         console.log("Predictions state updated:", predictions);
