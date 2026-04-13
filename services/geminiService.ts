@@ -12,20 +12,26 @@ const GROQ_MODEL_VISION = 'llama-3.2-11b-vision-preview';
 const GROQ_BASE_URL = 'https://api.groq.com/openai/v1/chat/completions';
 
 /** Devuelve las claves de Gemini configuradas */
-const getGeminiKeys = (): string[] =>
-  [
+const getGeminiKeys = (): string[] => {
+  const keys = [
     process.env.GEMINI_API_KEY,
     process.env.GEMINI_API_KEY_SECONDARY,
     process.env.GEMINI_API_KEY_TERTIARY,
     process.env.GEMINI_API_KEY_QUATERNARY,
   ].filter(Boolean) as string[];
+  console.log(`[IA] Claves Gemini detectadas: ${keys.length}`);
+  return keys;
+};
 
 /** Devuelve las claves de Groq configuradas */
-const getGroqKeys = (): string[] =>
-  [
+const getGroqKeys = (): string[] => {
+  const keys = [
     process.env.GROQ_API_KEY,
     process.env.GROQ_API_KEY_SECONDARY,
   ].filter(Boolean) as string[];
+  console.log(`[IA] Claves Groq detectadas: ${keys.length}`);
+  return keys;
+};
 
 /** Elimina bloques de código markdown de la respuesta de la IA */
 const cleanJsonResponse = (text: string): string =>
@@ -214,6 +220,7 @@ export const generateHealthRecommendations = async (healthData: HealthData, vigs
 export interface DailySummary {
   greeting: string;
   narrative: string;
+  analyticsSummary?: string; // Nuevo campo para el resumen de analíticas
   mood: 'great' | 'good' | 'okay' | 'watch';
   highlights: { label: string; status: 'positive' | 'neutral' | 'warning'; detail: string }[];
   quickTip: string;
@@ -231,13 +238,21 @@ export const generateDailySummary = async (
 
     INSTRUCCIONES:
     1. Greeting: Saludo cariñoso.
-    2. Narrative: Resumen de 3-4 frases.
-    3. Mood: "great", "good", "okay", o "watch".
-    4. Highlights: EXACTAMENTE 5 objetos con label ("Hidratación", "Actividad Física", "Descanso", "Nutrición/Salud", "Alimentación Equilibrada"), status ("positive", "neutral", "warning") y detail.
-    5. QuickTip: Consejo final.
+    2. Narrative: Resumen de 3-4 frases sobre su estado general.
+    3. AnalyticsSummary: Un resumen de 2 frases MÁXIMO analizando sus analíticas actuales (biomarcadores). Explica qué valor destaca o si todo está en orden de forma sencilla.
+    4. Mood: "great", "good", "okay", o "watch".
+    5. Highlights: EXACTAMENTE 5 objetos con label ("Hidratación", "Actividad Física", "Descanso", "Nutrición/Salud", "Alimentación Equilibrada"), status ("positive", "neutral", "warning") y detail.
+    6. QuickTip: Consejo final.
 
     RESPONDE SOLO EN JSON:
-    { "greeting": "...", "narrative": "...", "mood": "...", "highlights": [{ "label": "...", "status": "...", "detail": "..." }], "quickTip": "..." }
+    { 
+      "greeting": "...", 
+      "narrative": "...", 
+      "analyticsSummary": "...",
+      "mood": "...", 
+      "highlights": [{ "label": "...", "status": "...", "detail": "..." }], 
+      "quickTip": "..." 
+    }
   `;
 
   // 1. PRIORIDAD: GROQ (CON ROTACIÓN)

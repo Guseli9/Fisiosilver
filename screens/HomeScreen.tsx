@@ -599,9 +599,22 @@ const HomeScreen: React.FC = () => {
                         </p>
                     ) : (
                         dailySummary && (
-                            <p className="text-white/80 text-base font-bold mt-3 leading-relaxed max-w-2xl">
-                                {dailySummary.narrative}
-                            </p>
+                            <div className="space-y-4 mt-3">
+                                <p className="text-white/80 text-base font-bold leading-relaxed max-w-2xl">
+                                    {dailySummary.narrative}
+                                </p>
+                                {dailySummary.analyticsSummary && (
+                                    <div className="bg-white/10 backdrop-blur-sm p-4 rounded-2xl border border-white/10 max-w-2xl animate-fade-in">
+                                        <div className="flex items-center gap-2 mb-1">
+                                            <span className="text-xs">🩺</span>
+                                            <p className="text-[9px] font-black text-white/60 uppercase tracking-widest">Resumen Analítico</p>
+                                        </div>
+                                        <p className="text-sm font-bold text-white leading-relaxed">
+                                            {dailySummary.analyticsSummary}
+                                        </p>
+                                    </div>
+                                )}
+                            </div>
                         )
                     )}
                 </div>
