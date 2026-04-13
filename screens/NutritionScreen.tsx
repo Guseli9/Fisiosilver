@@ -73,12 +73,12 @@ const NutritionScreen: React.FC = () => {
             setTimeout(() => setSuccessMessage(null), 3000);
 
         } catch (err: any) {
-            console.error(err);
+            console.error("[NUTRITION ERROR]", err);
             if (err.message === "API_KEY_RESET") {
                 setError("La clave de API ha expirado o es inválida. Por favor, vuelva a configurar la clave.");
                 if (window.aistudio) window.aistudio.openSelectKey();
             } else {
-                setError("Error al procesar la imagen de nutrición.");
+                setError(err.message || "Error al procesar la imagen. Inténtelo de nuevo.");
             }
         } finally {
             setIsLoading(false);

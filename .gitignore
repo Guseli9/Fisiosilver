@@ -22,3 +22,16 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Claves y configuración (VITAL para seguridad)
+.env
+.env.local
+.env.*.local
+
+# Proyectos
+.vscode/
+.idea/
+node_modules/
+dist/
+dist-ssr/
+*.log

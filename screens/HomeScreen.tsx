@@ -348,9 +348,8 @@ const HomeScreen: React.FC = () => {
             
             if (summary) {
                 setDailySummary(summary);
-                // Forzamos el guardado con un hash basado en el tiempo si es manual para asegurar frescura
-                const finalHash = isForced ? `forced_${Date.now()}` : currentHash;
-                localStorage.setItem(`summaryHash_v2_${user.uid}`, finalHash);
+                // Siempre guardamos con timestamp para garantizar frescura en actualizaciones manuales
+                localStorage.setItem(`summaryHash_v2_${user.uid}`, `manual_${Date.now()}`);
                 localStorage.setItem(`dailySummary_v2_${user.uid}`, JSON.stringify(summary));
             } else {
                 setDailySummary({ greeting: `Hola, ${profile.displayName}`, narrative: 'Su seguimiento continúa activo. Recuerde registrar sus datos de hoy.', mood: 'okay', highlights: [], quickTip: 'Beba un vaso de agua ahora.' });
