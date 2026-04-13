@@ -27,6 +27,8 @@ const cleanJsonResponse = (text: string): string =>
 
 const callGemini = async (payload: object): Promise<any> => {
   const keys = getApiKeys();
+  console.log(`[GEMINI] Sistema de rotación iniciado. Llaves detectadas: ${keys.length}`);
+  
   if (keys.length === 0) {
     throw new Error('No hay claves de API de Gemini configuradas en el archivo .env');
   }
@@ -35,7 +37,7 @@ const callGemini = async (payload: object): Promise<any> => {
 
   for (let i = 0; i < keys.length; i++) {
     const key = keys[i];
-    const keyLabel = `Clave ${i + 1} (${key!.substring(0, 10)}...)`;
+    const keyLabel = `Clave ${i + 1}/${keys.length} (${key!.substring(0, 10)}...)`;
     try {
       console.log(`[GEMINI] Intentando ${keyLabel}...`);
       const url = `${GEMINI_BASE_URL}/${GEMINI_MODEL}:generateContent?key=${key}`;
@@ -52,13 +54,21 @@ const callGemini = async (payload: object): Promise<any> => {
         const msg = data.error.message || '';
         console.warn(`[GEMINI] ${keyLabel} → Error ${code}: ${msg}`);
         lastError = new Error(`Error Gemini (${code}): ${msg}`);
-        // Si es cuota / sobrecarga, probamos la siguiente clave
+        
+        // Error 503 (Servicio no disponible/Saturado) o 429 (Cuota)
         const msgLower = msg.toLowerCase();
-        if (code === 429 || code === 503 || msgLower.includes('quota') || msgLower.includes('overload') || msgLower.includes('demand')) {
-          await new Promise(r => setTimeout(r, 400));
+        if (code === 503 || msgLower.includes('demand') || msgLower.includes('overload')) {
+          console.log(`[GEMINI] ${keyLabel} saturada. Esperando 1.5s antes de probar la siguiente...`);
+          await new Promise(r => setTimeout(r, 1500));
           continue;
         }
-        // Para cualquier otro error de la API también continuamos con la siguiente clave
+
+        if (code === 429 || msgLower.includes('quota')) {
+          console.log(`[GEMINI] ${keyLabel} sin cuota. Saltando a la siguiente inmediatamente...`);
+          continue;
+        }
+
+        // Para cualquier otro error (400, 404, etc), también saltamos a la siguiente
         continue;
       }
 

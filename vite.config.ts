@@ -11,11 +11,10 @@ export default defineConfig(({ mode }) => {
       },
       plugins: [react()],
       define: {
-        'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),
-        'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
-        'process.env.GEMINI_API_KEY_SECONDARY': JSON.stringify(env.GEMINI_API_KEY_SECONDARY),
-        'process.env.GEMINI_API_KEY_TERTIARY': JSON.stringify(env.GEMINI_API_KEY_TERTIARY),
-        'process.env.GROQ_API_KEY': JSON.stringify(env.GROQ_API_KEY)
+        'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY || ""),
+        'process.env.GEMINI_API_KEY_SECONDARY': JSON.stringify(env.GEMINI_API_KEY_SECONDARY || ""),
+        'process.env.GEMINI_API_KEY_TERTIARY': JSON.stringify(env.GEMINI_API_KEY_TERTIARY || ""),
+        'process.env.GROQ_API_KEY': JSON.stringify(env.GROQ_API_KEY || "")
       },
       resolve: {
         alias: {
