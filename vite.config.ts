@@ -16,7 +16,9 @@ export default defineConfig(({ mode }) => {
         'process.env.GEMINI_API_KEY_TERTIARY': JSON.stringify(env.GEMINI_API_KEY_TERTIARY || ""),
         'process.env.GEMINI_API_KEY_QUATERNARY': JSON.stringify(env.GEMINI_API_KEY_QUATERNARY || ""),
         'process.env.GROQ_API_KEY': JSON.stringify(env.GROQ_API_KEY || ""),
-        'process.env.GROQ_API_KEY_SECONDARY': JSON.stringify(env.GROQ_API_KEY_SECONDARY || "")
+        'process.env.GROQ_API_KEY_SECONDARY': JSON.stringify(env.GROQ_API_KEY_SECONDARY || ""),
+        'process.env.OPENROUTER_API_KEY': JSON.stringify(env.OPENROUTER_API_KEY || ""),
+        'process.env.OPENROUTER_API_KEY_SECONDARY': JSON.stringify(env.OPENROUTER_API_KEY_SECONDARY || "")
       },
       resolve: {
         alias: {

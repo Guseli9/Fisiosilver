@@ -99,6 +99,15 @@ export interface NutritionalAnalysis {
   analysis: NutritionalAnalysisResult;
   createdAt: Date;
 }
+export interface Challenge {
+    id: string;
+    title: string;
+    description: string;
+    points: number;
+    completed: boolean;
+    category: 'nutrition' | 'activity' | 'vitals' | 'social';
+    difficulty: 'fácil' | 'medio' | 'difícil';
+}
 
 export type ActivityLevel = 'sedentary' | 'light' | 'moderate' | 'active' | 'very-active';
 
@@ -120,6 +129,8 @@ export interface UserProfile {
     alerts: Alert[];
     smokingStatus: SmokingStatus;
     nutritionalScore: number;
+    points: number;
+    level: number;
 }
 
 declare global {

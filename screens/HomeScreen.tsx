@@ -4,10 +4,10 @@ import { AppContext } from '../contexts/AppContext';
 import { useAuth } from '../contexts/AuthContext';
 import { getDailyHistory, updateUserProfile, getUserProfile, getVigsHistory, getNutritionLogs } from '../services/firestore';
 import { predictMortality, predictHospitalization, predictCVRisk } from '../services/mlService';
-import { generateHealthRecommendations, generateDailySummary } from '../services/geminiService';
+import { generateWeeklyChallenges, generateDailySummary, explainClinicalData } from '../services/geminiService';
 import type { DailySummary } from '../services/geminiService';
-import type { VigsCategory, HealthData, UserProfile, SmokingStatus, NutriScore, ActivityLevel } from '../types';
-import { XMarkIcon, avatars, PencilSquareIcon, CheckCircleIcon, SparklesIcon, ActivityIcon, PlusIcon, ChevronRightIcon, HeartIcon, TrashIcon, UserIcon, AppleIcon, InfoCircleIcon, ArrowPathIcon } from '../components/Icons';
+import type { VigsCategory, HealthData, UserProfile, SmokingStatus, NutriScore, ActivityLevel, Challenge } from '../types';
+import { XMarkIcon, avatars, PencilSquareIcon, CheckCircleIcon, SparklesIcon, ActivityIcon, PlusIcon, ChevronRightIcon, HeartIcon, TrashIcon, UserIcon, AppleIcon, InfoCircleIcon, ArrowPathIcon, TrophyIcon, WrenchIcon, LightBulbIcon } from '../components/Icons';
 import { NutritionRadarChart } from '../components/NutritionCharts';
 
 
@@ -201,12 +201,14 @@ const HomeScreen: React.FC = () => {
     const [lastFeatures, setLastFeatures] = useState<number[]>([]);
     const [selectedDetail, setSelectedDetail] = useState<{ label: string, key: string, unit: string, range?: {min: number, max: number} } | null>(null);
     const [detailHistory, setDetailHistory] = useState<ChartDataPoint[]>([]);
-    const [recommendations, setRecommendations] = useState<{ title: string; justification: string; step: string }[]>([]);
-    const [isLoadingRecs, setIsLoadingRecs] = useState(false);
+    const [challenges, setChallenges] = useState<Challenge[]>([]);
+    const [isLoadingChallenges, setIsLoadingChallenges] = useState(false);
     const isRunningPredictionsRef = React.useRef(false);
 
     const [dailySummary, setDailySummary] = useState<DailySummary | null>(null);
     const [isLoadingSummary, setIsLoadingSummary] = useState(false);
+    const [clinicalExplanation, setClinicalExplanation] = useState<string | null>(null);
+    const [isLoadingClinicalExp, setIsLoadingClinicalExp] = useState(false);
     const [dailyHistory, setDailyHistory] = useState<(HealthData & { createdAt: Date })[]>([]);
 
     const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -284,7 +286,7 @@ const HomeScreen: React.FC = () => {
 
     useEffect(() => { loadProfile(); }, [user]);
 
-    // PASO 1: Cargar resumen cacheado INMEDIATAMENTE al montar
+    // PASO 1: Cargar resumen y retos cacheados INMEDIATAMENTE al montar
     useEffect(() => {
         if (!user) return;
         const cachedSummary = localStorage.getItem(`dailySummary_v2_${user.uid}`);
@@ -293,6 +295,10 @@ const HomeScreen: React.FC = () => {
                 setDailySummary(JSON.parse(cachedSummary)); 
                 console.log("[CACHE] Resumen cargado del almacenamiento local.");
             } catch {}
+        }
+        const cachedChallenges = localStorage.getItem(`challenges_v2_${user.uid}`);
+        if (cachedChallenges) {
+            try { setChallenges(JSON.parse(cachedChallenges)); } catch {}
         }
     }, [user.uid]);
 
@@ -358,14 +364,6 @@ const HomeScreen: React.FC = () => {
             setIsLoadingSummary(false);
         }
     }, [user, profile, healthData, vigsScore, clinicalAnalyses, nutritionalAnalyses, dailyHistory, recentMealDescriptions, isLoadingSummary, isLoading]);
-
-    // PASO 2: Generación automática si hay datos pero no hay resumen
-    useEffect(() => {
-        if (user && hasRealData && !dailySummary && !isLoadingSummary && profile) {
-            console.log("[IA] Detectados datos reales sin resumen. Generando automáticamente...");
-            handleGenerateSummary();
-        }
-    }, [user, hasRealData, dailySummary, isLoadingSummary, profile, handleGenerateSummary]);
 
     useEffect(() => {
         console.log("Predictions state updated:", predictions);
@@ -469,20 +467,63 @@ const HomeScreen: React.FC = () => {
             console.log("Setting new predictions:", newPredictions);
             setPredictions(newPredictions);
 
-            // Fetch AI Recommendations
-            setIsLoadingRecs(true);
-            const recs = await generateHealthRecommendations(healthData, vigsScore);
-            setRecommendations(recs);
-            setIsLoadingRecs(false);
         } catch (e) {
             console.error("Critical error in prediction pipeline:", e);
         } finally {
             isRunningPredictionsRef.current = false;
             setIsLoadingPredictions(false);
-            setIsLoadingRecs(false);
             console.log("--- FIN PREDICCIÓN IA ---");
         }
     }, [healthData, vigsScore, profile, clinicalAnalyses, setPredictions]);
+
+    const handleFetchChallenges = useCallback(async () => {
+        if (!healthData || !vigsScore || !profile || !user || isLoadingChallenges) return;
+        setIsLoadingChallenges(true);
+        try {
+            console.log("[IA] Solicitando retos semanales...");
+            const newChallenges = await generateWeeklyChallenges(healthData, vigsScore, profile);
+            setChallenges(newChallenges);
+            localStorage.setItem(`challenges_v2_${user.uid}`, JSON.stringify(newChallenges));
+        } catch (e) {
+            console.error("Error fetching challenges:", e);
+        } finally {
+            setIsLoadingChallenges(false);
+        }
+    }, [healthData, vigsScore, profile, user, isLoadingChallenges]);
+
+    const handleToggleChallenge = async (challengeId: string) => {
+        if (!profile || !user) return;
+        const newChallenges = challenges.map(c => {
+            if (c.id === challengeId) {
+                const isNowCompleted = !c.completed;
+                if (isNowCompleted) {
+                    const totalPoints = (profile.points || 0) + c.points;
+                    const newLevel = Math.floor(totalPoints / 500) + 1;
+                    updateUserProfile(user.uid, { points: totalPoints, level: newLevel });
+                    setProfile(prev => prev ? { ...prev, points: totalPoints, level: newLevel } : null);
+                    setSuccessMessage(`¡Excelente! +${c.points} puntos ganados.`);
+                    setTimeout(() => setSuccessMessage(null), 3000);
+                }
+                return { ...c, completed: isNowCompleted };
+            }
+            return c;
+        });
+        setChallenges(newChallenges);
+        localStorage.setItem(`challenges_v2_${user.uid}`, JSON.stringify(newChallenges));
+    };
+
+    const handleExplainClinical = useCallback(async () => {
+        if (clinicalAnalyses.length === 0 || isLoadingClinicalExp) return;
+        setIsLoadingClinicalExp(true);
+        try {
+            const exp = await explainClinicalData(clinicalAnalyses[0].analysis.biomarkers);
+            setClinicalExplanation(exp);
+        } catch (e) {
+            console.error("Error explaining clinical data:", e);
+        } finally {
+            setIsLoadingClinicalExp(false);
+        }
+    }, [clinicalAnalyses, isLoadingClinicalExp]);
 
     useEffect(() => {
         // Ejecutamos si tenemos los datos mínimos, el profile es opcional para el tabaquismo
@@ -565,9 +606,20 @@ const HomeScreen: React.FC = () => {
                             <AvatarComponent className="w-20 h-20" />
                         </div>
                     </button>
-                    <div className="text-right">
-                        <p className="text-[10px] font-black text-brand-gray-300 uppercase tracking-widest leading-none mb-1">Última Conexión</p>
-                        <p className="text-xs font-bold text-brand-gray-500">Hoy, {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+                    <div className="text-right flex items-center gap-4 sm:gap-6">
+                        <div className="hidden sm:block">
+                            <p className="text-[10px] font-black text-brand-gray-300 uppercase tracking-widest leading-none mb-1 text-center">Nivel</p>
+                            <div className="flex items-center justify-center bg-brand-gradient rounded-full w-10 h-10 shadow-premium">
+                                <span className="text-white font-black text-lg">{profile?.level || 1}</span>
+                            </div>
+                        </div>
+                        <div>
+                            <p className="text-[10px] font-black text-brand-gray-300 uppercase tracking-widest leading-none mb-1">Puntos XP</p>
+                            <div className="flex items-center gap-2 bg-white px-4 py-2 rounded-2xl shadow-soft border border-brand-gray-50">
+                                <TrophyIcon className="w-5 h-5 text-brand-yellow" />
+                                <span className="text-sm font-black text-brand-gray-900">{profile?.points || 0}</span>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </header>
@@ -581,19 +633,9 @@ const HomeScreen: React.FC = () => {
             {/* ══════════ AI DAILY SUMMARY CARD ══════════ */}
             <section className="mb-12 bg-white rounded-[2.5rem] shadow-premium-lg border border-brand-gray-100 overflow-hidden">
                 <div className="bg-brand-gradient p-8 pb-12 relative">
-                    <div className="absolute top-4 right-6 flex items-center gap-4">
-                        <button 
-                            onClick={handleGenerateSummary}
-                            disabled={isLoadingSummary}
-                            className={`flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/10 hover:bg-white/20 border border-white/20 transition-all active:scale-95 ${isLoadingSummary ? 'opacity-50 cursor-not-allowed' : ''}`}
-                        >
-                            <ArrowPathIcon className={`w-4 h-4 text-white ${isLoadingSummary ? 'animate-spin' : ''}`} />
-                            <span className="text-[10px] font-black text-white uppercase tracking-widest">Actualizar Informe</span>
-                        </button>
-                        <div className="flex items-center gap-2">
-                            <SparklesIcon className="w-5 h-5 text-white/60" />
-                            <span className="text-[9px] font-black text-white/60 uppercase tracking-widest">IA Activa</span>
-                        </div>
+                    <div className="absolute top-4 right-6 flex items-center gap-2">
+                        <SparklesIcon className="w-5 h-5 text-white/60" />
+                        <span className="text-[9px] font-black text-white/60 uppercase tracking-widest">IA Activa</span>
                     </div>
                     <h2 className="text-white text-3xl font-black tracking-tighter">
                         {!hasRealData ? '¡Bienvenido a Fisiosilver!' : (isLoadingSummary ? 'Analizando tu salud...' : (dailySummary?.greeting || `Buenos días, ${profile?.displayName}`))}
@@ -619,6 +661,16 @@ const HomeScreen: React.FC = () => {
                                         </p>
                                     </div>
                                 )}
+                                <div className="pt-2">
+                                    <button 
+                                        onClick={handleGenerateSummary}
+                                        disabled={isLoadingSummary}
+                                        className={`flex items-center gap-2 px-4 py-2 rounded-xl bg-white/20 hover:bg-white/30 border border-white/30 transition-all active:scale-95 group/btn ${isLoadingSummary ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                    >
+                                        <ArrowPathIcon className={`w-4 h-4 text-white ${isLoadingSummary ? 'animate-spin' : 'group-hover/btn:rotate-180 transition-transform duration-500'}`} />
+                                        <span className="text-[11px] font-black text-white uppercase tracking-widest">Actualizar mi informe de salud con IA</span>
+                                    </button>
+                                </div>
                             </div>
                         )
                     )}
@@ -747,9 +799,34 @@ const HomeScreen: React.FC = () => {
                                 );
                             })}
                         </div>
-                        {clinicalAnalyses[0].analysis.summary && (
-                            <p className="mt-5 text-sm font-bold text-brand-gray-600 italic border-t border-brand-gray-50 pt-4">📋 {clinicalAnalyses[0].analysis.summary}</p>
-                        )}
+                        <div className="mt-5 border-t border-brand-gray-50 pt-4">
+                            {!clinicalExplanation ? (
+                                <button 
+                                    onClick={handleExplainClinical}
+                                    disabled={isLoadingClinicalExp}
+                                    className={`flex items-center gap-2 px-4 py-2 rounded-xl bg-brand-lightblue text-brand-blue border border-brand-blue/10 hover:bg-brand-blue hover:text-white transition-all text-[10px] font-black uppercase tracking-widest active:scale-95 ${isLoadingClinicalExp ? 'opacity-50 cursor-wait' : ''}`}
+                                >
+                                    <LightBulbIcon className={`w-4 h-4 ${isLoadingClinicalExp ? 'animate-pulse' : ''}`} />
+                                    {isLoadingClinicalExp ? 'IA Interpretando...' : 'Explicar mis resultados (IA)'}
+                                </button>
+                            ) : (
+                                <div className="bg-brand-gray-50 p-6 rounded-2xl animate-fade-in border border-brand-gray-100">
+                                    <div className="flex items-center gap-2 mb-3">
+                                        <div className="w-2 h-2 rounded-full bg-brand-blue" />
+                                        <p className="text-[10px] font-black text-brand-blue uppercase tracking-widest">Interpretación Pedagógica</p>
+                                    </div>
+                                    <div className="text-sm font-bold text-brand-gray-700 leading-relaxed whitespace-pre-wrap">
+                                        {clinicalExplanation}
+                                    </div>
+                                    <button 
+                                        onClick={() => setClinicalExplanation(null)}
+                                        className="mt-4 text-[9px] font-black text-brand-gray-400 uppercase tracking-widest hover:text-brand-gray-600"
+                                    >
+                                        Cerrar explicación
+                                    </button>
+                                </div>
+                            )}
+                        </div>
                     </div>
                 </section>
             )}
@@ -758,12 +835,11 @@ const HomeScreen: React.FC = () => {
             <div className="flex justify-between items-center mb-6 ml-2">
                 <h2 className="text-[11px] font-black text-brand-gray-400 uppercase tracking-[0.4em]">Predicciones de Riesgo (IA)</h2>
                 <button 
-                    onClick={runPredictions} 
-                    disabled={isLoadingPredictions}
-                    className={`text-[9px] font-black uppercase tracking-widest hover:underline disabled:opacity-50 flex items-center gap-2 ${isLoadingPredictions ? 'text-brand-gray-400' : 'text-brand-blue'}`}
+                    onClick={() => setShowDebug(!showDebug)} 
+                    className={`text-[9px] font-black uppercase tracking-widest hover:underline flex items-center gap-2 ${showDebug ? 'text-brand-orange animate-pulse' : 'text-brand-gray-400'}`}
                 >
-                    {isLoadingPredictions && <div className="w-2 h-2 rounded-full bg-brand-blue animate-ping" />}
-                    {isLoadingPredictions ? 'Calculando...' : 'Recalcular'}
+                    <WrenchIcon className="w-3.5 h-3.5" />
+                    {showDebug ? 'Ocultar Valores' : 'Depurar Modelos ML'}
                 </button>
             </div>
             
@@ -777,13 +853,24 @@ const HomeScreen: React.FC = () => {
                     </div>
                 )}
                 {[
-                    { label: 'Mortalidad', value: predictions.mortality, desc: 'Riesgo a 1 año', color: '#EF4444' },
-                    { label: 'Hospital', value: predictions.hospitalization, desc: 'Riesgo de ingreso', color: '#F97316' },
-                    { label: 'Cardiovascular', value: predictions.cvRisk, desc: 'Evento CV mayor', color: '#8B5CF6' },
-                    { label: 'Caídas', value: predictions.fallsRisk, desc: 'Riesgo de caída', color: '#0062E3' },
+                    { label: 'Índice de Vitalidad', value: 100 - predictions.mortality, desc: 'Capacidad de reserva', color: '#10B981', isInverted: true },
+                    { label: 'Índice de Protección', value: 100 - predictions.hospitalization, desc: 'Estabilidad clínica', color: '#3B82F6', isInverted: true },
+                    { label: 'Salud Cardiovascular', value: 100 - predictions.cvRisk, desc: 'Estado circulatorio', color: '#8B5CF6', isInverted: true },
+                    { label: 'Riesgo de Caídas', value: predictions.fallsRisk, desc: 'Probabilidad de caída', color: '#F59E0B', isInverted: false },
                 ].map((risk, i) => {
-                    const level = risk.value > 30 ? 'Alto' : risk.value > 15 ? 'Moderado' : 'Bajo';
-                    const levelClass = risk.value > 30 ? 'text-brand-red bg-brand-soft-red' : risk.value > 15 ? 'text-brand-orange bg-brand-soft-orange' : 'text-brand-green bg-brand-soft-green';
+                    let level = '';
+                    let levelClass = '';
+                    
+                    if (risk.isInverted) {
+                        // Lógica para ÍNDICES (Subir es BUENO)
+                        level = risk.value > 85 ? 'Alto' : risk.value > 70 ? 'Moderado' : 'Bajo';
+                        levelClass = risk.value > 85 ? 'text-brand-green bg-brand-soft-green' : risk.value > 70 ? 'text-brand-orange bg-brand-soft-orange' : 'text-brand-red bg-brand-soft-red';
+                    } else {
+                        // Lógica para RIESGOS (Subir es MALO - Caídas)
+                        level = risk.value > 30 ? 'Alto' : risk.value > 15 ? 'Moderado' : 'Bajo';
+                        levelClass = risk.value > 30 ? 'text-brand-red bg-brand-soft-red' : risk.value > 15 ? 'text-brand-orange bg-brand-soft-orange' : 'text-brand-green bg-brand-soft-green';
+                    }
+
                     return (
                         <div key={i} className="bg-white p-6 rounded-[2rem] shadow-soft border border-brand-gray-100 flex flex-col items-center text-center hover:shadow-premium transition-all">
                             <div className="relative w-24 h-24 mb-3">
@@ -797,13 +884,143 @@ const HomeScreen: React.FC = () => {
                                     <span className="text-2xl font-black text-brand-gray-900">{risk.value.toFixed(0)}%</span>
                                 </div>
                             </div>
-                            <p className="text-[10px] font-black text-brand-gray-400 uppercase tracking-widest mb-1">{risk.label}</p>
+                            <p className="text-[9px] font-black text-brand-gray-400 uppercase tracking-widest mb-1 min-h-[12px]">{risk.label}</p>
                             <span className={`text-[8px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full ${levelClass}`}>{level}</span>
                             <p className="text-[10px] text-brand-gray-400 font-bold mt-2 italic">{risk.desc}</p>
                         </div>
                     );
                 })}
             </div>
+
+            {showDebug && lastFeatures.length > 0 && (
+                <div className="mb-12 bg-brand-gray-900 text-white p-8 rounded-[2rem] shadow-premium-lg animate-slide-up overflow-hidden relative border border-white/10">
+                    <div className="absolute top-0 right-0 p-8 opacity-10">
+                        <WrenchIcon className="w-24 h-24 rotate-12" />
+                    </div>
+                    <div className="relative z-10">
+                        <div className="flex items-center gap-3 mb-6">
+                            <span className="w-2 h-2 rounded-full bg-brand-orange animate-pulse" />
+                            <h3 className="text-[10px] font-black uppercase tracking-[0.3em] text-brand-orange">Vector de Características (Features)</h3>
+                        </div>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-6">
+                            {[
+                                { label: 'Edad', val: lastFeatures[0] },
+                                { label: 'Ind. VIGS', val: lastFeatures[1]?.toFixed(2) },
+                                { label: 'Albúmina', val: lastFeatures[2] },
+                                { label: 'Pantorrilla', val: lastFeatures[3] },
+                                { label: 'Hemoglobina', val: lastFeatures[4] },
+                                { label: 'PCR', val: lastFeatures[5] },
+                                { label: 'Vit. D', val: lastFeatures[6] },
+                                { label: 'Creatinina', val: lastFeatures[7] },
+                                { label: 'T. Sistólica', val: lastFeatures[8] },
+                                { label: 'LDL', val: lastFeatures[9] },
+                                { label: 'HbA1c', val: lastFeatures[10] }
+                            ].map((f, i) => (
+                                <div key={i} className="flex flex-col">
+                                    <span className="text-[8px] font-black text-white/40 uppercase tracking-widest mb-1">{f.label}</span>
+                                    <span className="text-xl font-black text-brand-orange tabular-nums leading-none tracking-tighter">{f.val}</span>
+                                </div>
+                            ))}
+                        </div>
+                        <div className="mt-10 pt-6 border-t border-white/10 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                            <p className="text-[9px] font-medium text-white/40 italic flex items-center gap-2">
+                                <InfoCircleIcon className="w-3 h-3" />
+                                Modelos Feed-forward utilizando 11 tensores normalizados.
+                            </p>
+                            <div className="flex gap-4">
+                                <button onClick={runPredictions} className="bg-white/10 text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest hover:bg-white/20 transition-all active:scale-95 shadow-soft">Refrescar Tensores</button>
+                                <button onClick={() => setShowDebug(false)} className="bg-brand-orange text-brand-gray-900 px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest hover:scale-105 transition-transform active:scale-95 shadow-premium">Cerrar</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ══════════ AI WEEKLY CHALLENGES (GAMIFIED) ══════════ */}
+            <section className="mb-16">
+                <div className="flex justify-between items-center mb-6 ml-2">
+                    <div className="flex items-center gap-3">
+                        <div className="p-2 bg-brand-yellow/10 rounded-xl">
+                            <TrophyIcon className="w-5 h-5 text-brand-yellow" />
+                        </div>
+                        <h2 className="text-[11px] font-black text-brand-gray-400 uppercase tracking-[0.4em]">Retos Semanales (IA)</h2>
+                    </div>
+                    <button 
+                        onClick={handleFetchChallenges} 
+                        disabled={isLoadingChallenges || !hasRealData}
+                        className={`px-4 py-2 rounded-full border-2 border-brand-blue text-[10px] font-black uppercase tracking-widest transition-all ${
+                            isLoadingChallenges ? 'bg-brand-gray-50 text-brand-gray-400 border-brand-gray-200 cursor-wait' : 
+                            !hasRealData ? 'opacity-30 border-brand-gray-300 text-brand-gray-300 cursor-not-allowed' :
+                            'bg-white text-brand-blue hover:bg-brand-lightblue active:scale-95'
+                        }`}
+                    >
+                        {isLoadingChallenges ? 'Generando...' : (challenges.length > 0 ? 'Renovar Retos' : 'Activar Retos IA')}
+                    </button>
+                </div>
+
+                {challenges.length > 0 ? (
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        {challenges.map((challenge) => (
+                            <button 
+                                key={challenge.id} 
+                                onClick={() => handleToggleChallenge(challenge.id)}
+                                className={`group relative bg-white p-6 rounded-[2rem] shadow-soft border text-left transition-all duration-300 hover:shadow-premium-lg overflow-hidden ${
+                                    challenge.completed ? 'border-brand-green/30 opacity-75 grayscale-[0.5]' : 'border-brand-gray-100'
+                                }`}
+                            >
+                                {challenge.completed && (
+                                    <div className="absolute top-0 right-0 p-4 animate-scale-up">
+                                        <CheckCircleIcon className="w-8 h-8 text-brand-green" />
+                                    </div>
+                                )}
+                                
+                                <div className="flex items-center gap-2 mb-4">
+                                    <div className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-wider ${
+                                        challenge.difficulty === 'fácil' ? 'bg-brand-soft-green text-brand-green' :
+                                        challenge.difficulty === 'medio' ? 'bg-brand-soft-orange text-brand-orange' :
+                                        'bg-brand-soft-red text-brand-red'
+                                    }`}>
+                                        {challenge.difficulty}
+                                    </div>
+                                    <div className="px-2 py-0.5 rounded-full bg-brand-gray-100 text-brand-gray-400 text-[8px] font-black uppercase tracking-wider">
+                                        {challenge.category}
+                                    </div>
+                                </div>
+                                
+                                <h3 className={`text-sm font-black tracking-tight mb-2 ${challenge.completed ? 'text-brand-gray-400 line-through' : 'text-brand-gray-900'}`}>
+                                    {challenge.title}
+                                </h3>
+                                
+                                <p className={`text-xs font-bold leading-relaxed mb-6 ${challenge.completed ? 'text-brand-gray-300' : 'text-brand-gray-500'}`}>
+                                    {challenge.description}
+                                </p>
+                                
+                                <div className="mt-auto flex justify-between items-center pt-4 border-t border-brand-gray-50">
+                                    <div className="flex items-center gap-1.5">
+                                        <SparklesIcon className={`w-3.5 h-3.5 ${challenge.completed ? 'text-brand-gray-300' : 'text-brand-blue'}`} />
+                                        <span className="text-[10px] font-black text-brand-gray-900">+{challenge.points} XP</span>
+                                    </div>
+                                    <div className={`text-[9px] font-black uppercase tracking-widest ${challenge.completed ? 'text-brand-green' : 'text-brand-blue'}`}>
+                                        {challenge.completed ? 'Completado' : 'Pulsa para completar'}
+                                    </div>
+                                </div>
+
+                                {challenge.completed && (
+                                    <div className="absolute inset-0 bg-brand-green/5 pointer-events-none" />
+                                )}
+                            </button>
+                        ))}
+                    </div>
+                ) : (
+                    <div className="bg-brand-gray-50 p-10 rounded-[2.5rem] border-2 border-dashed border-brand-gray-200 flex flex-col items-center text-center">
+                        <div className="w-16 h-16 bg-white rounded-full flex items-center justify-center shadow-sm mb-4">
+                            <TrophyIcon className="w-8 h-8 text-brand-gray-200" />
+                        </div>
+                        <h3 className="text-sm font-black text-brand-gray-400 uppercase tracking-widest mb-1">Misiones no asignadas</h3>
+                        <p className="text-xs font-bold text-brand-gray-300 max-w-sm">Pulsa en "Activar Retos" para que la IA diseñe misiones semanales basadas en tus objetivos de salud.</p>
+                    </div>
+                )}
+            </section>
 
             {/* AI Summary is now the sole source of personalized feedback above */}
 

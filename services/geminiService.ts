@@ -11,28 +11,47 @@ const GROQ_MODEL_TEXT = 'llama-3.1-8b-instant'; // Modelo de bajo consumo y alta
 const GROQ_MODEL_VISION = 'llama-3.2-11b-vision-preview';
 const GROQ_BASE_URL = 'https://api.groq.com/openai/v1/chat/completions';
 
-/** Devuelve las claves de Gemini configuradas */
+const OPENROUTER_MODEL = 'google/gemma-4-26b-a4b-it:free';
+const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1/chat/completions';
+
+/** Cache de claves para evitar recalcular y loguear en cada llamada */
+let _geminiKeysCache: string[] | null = null;
+let _groqKeysCache: string[] | null = null;
+
+/** Devuelve las claves de Gemini configuradas (cacheadas) */
 const getGeminiKeys = (): string[] => {
-  const keys = [
+  if (_geminiKeysCache) return _geminiKeysCache;
+  _geminiKeysCache = [
     process.env.GEMINI_API_KEY,
     process.env.GEMINI_API_KEY_SECONDARY,
     process.env.GEMINI_API_KEY_TERTIARY,
     process.env.GEMINI_API_KEY_QUATERNARY,
   ].filter(Boolean) as string[];
-  console.log(`[IA] Claves Gemini detectadas: ${keys.length}`);
-  return keys;
+  console.log(`[IA] Claves Gemini disponibles: ${_geminiKeysCache.length}`);
+  return _geminiKeysCache;
 };
 
-/** Devuelve las claves de Groq configuradas */
+/** Devuelve las claves de Groq configuradas (cacheadas) */
 const getGroqKeys = (): string[] => {
-  const keys = [
+  if (_groqKeysCache) return _groqKeysCache;
+  _groqKeysCache = [
     process.env.GROQ_API_KEY,
     process.env.GROQ_API_KEY_SECONDARY,
   ].filter(Boolean) as string[];
-  console.log(`[IA] Claves Groq detectadas: ${keys.length}`);
-  return keys;
+  console.log(`[IA] Claves Groq disponibles: ${_groqKeysCache.length}`);
+  return _groqKeysCache;
 };
 
+let _openRouterKeysCache: string[] | null = null;
+const getOpenRouterKeys = (): string[] => {
+    if (_openRouterKeysCache) return _openRouterKeysCache;
+    _openRouterKeysCache = [
+        process.env.OPENROUTER_API_KEY,
+        process.env.OPENROUTER_API_KEY_SECONDARY,
+    ].filter(Boolean) as string[];
+    console.log(`[IA] Claves OpenRouter disponibles: ${_openRouterKeysCache.length}`);
+    return _openRouterKeysCache;
+};
 /** Extrae y limpia el JSON de una respuesta de la IA que puede contener texto explicativo */
 const cleanJsonResponse = (text: string): string => {
   const jsonMatch = text.match(/\{[\s\S]*\}/);
@@ -44,7 +63,7 @@ const cleanJsonResponse = (text: string): string => {
 // NÚCLEO GROQ: Llamadas REST con rotación de claves
 // ═══════════════════════════════════════════════════════
 
-const callGroqText = async (prompt: string): Promise<string> => {
+const callGroqText = async (prompt: string, isJson: boolean = true): Promise<string> => {
   const keys = getGroqKeys();
   if (keys.length === 0) throw new Error("No hay claves de Groq configuradas");
 
@@ -54,14 +73,14 @@ const callGroqText = async (prompt: string): Promise<string> => {
     const key = keys[i];
     const label = `Groq Clave ${i+1}/${keys.length}`;
     try {
-      const response = await fetch(GROQ_BASE_URL, {
+      const response = await fetch('/api/groq', {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          prompt,
+          apiKey: key,
           model: GROQ_MODEL_TEXT,
-          messages: [{ role: 'user', content: prompt }],
-          temperature: 0.1,
-          response_format: { type: "json_object" }
+          isJson
         })
       });
 
@@ -90,20 +109,17 @@ const callGroqWithImage = async (prompt: string, base64: string, mimeType: strin
 
   for (let key of keys) {
     try {
-      const response = await fetch(GROQ_BASE_URL, {
+      const response = await fetch('/api/groq', {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          prompt,
+          apiKey: key,
           model: GROQ_MODEL_VISION,
-          messages: [{
-            role: 'user',
-            content: [
-              { type: "text", text: prompt },
-              { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64}` } }
-            ]
-          }],
-          temperature: 0.1,
-          response_format: { type: "json_object" }
+          isJson: true,
+          isImage: true,
+          base64,
+          mimeType
         })
       });
       const data = await response.json();
@@ -111,6 +127,61 @@ const callGroqWithImage = async (prompt: string, base64: string, mimeType: strin
     } catch (err) { continue; }
   }
   throw new Error("Fallo en Groq Vision");
+};
+
+/** Lógica de salvamento final: OpenRouter con rotación de claves */
+const callOpenRouter = async (prompt: string, base64?: string, mimeType?: string): Promise<string> => {
+    const keys = getOpenRouterKeys();
+    if (keys.length === 0) throw new Error("No hay claves de OpenRouter configuradas");
+    
+    let lastError: any = null;
+
+    for (let i = 0; i < keys.length; i++) {
+        const key = keys[i];
+        try {
+            const messages = base64 ? [
+                {
+                    role: 'user',
+                    content: [
+                        { type: 'text', text: prompt },
+                        { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64}` } }
+                    ]
+                }
+            ] : [{ role: 'user', content: prompt }];
+
+            const response = await fetch(OPENROUTER_BASE_URL, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${key}`,
+                    'Content-Type': 'application/json',
+                    'HTTP-Referer': 'https://fisiosilver.vercel.app',
+                    'X-Title': 'Fisiosilver'
+                },
+                body: JSON.stringify({
+                    model: OPENROUTER_MODEL,
+                    messages,
+                    temperature: 0.1
+                })
+            });
+            
+            const data = await response.json();
+            
+            if (!response.ok) {
+                const errMsg = `Status ${response.status}: ${data.error?.message || response.statusText}`;
+                console.warn(`[IA] OpenRouter clave ${i+1}/${keys.length} falló:`, errMsg);
+                throw new Error(`OpenRouter Error: ${errMsg}`);
+            }
+            
+            return data.choices?.[0]?.message?.content || "";
+        } catch (e: any) {
+            lastError = e;
+            // Si hay otra clave, continuamos en el bucle
+            continue;
+        }
+    }
+    
+    console.error("[IA] Fallo absoluto en OpenRouter tras rotar claves:", lastError);
+    throw lastError;
 };
 
 // ═══════════════════════════════════════════════════════
@@ -132,8 +203,13 @@ const callGemini = async (payload: object): Promise<any> => {
 
       const data = await response.json();
       if (data.error) {
-        if (data.error.code === 503 || data.error.message.includes('demand')) {
-          await new Promise(r => setTimeout(r, 1500)); continue;
+        const code = data.error.code;
+        const msg = data.error.message || '';
+        console.warn(`[IA] Gemini clave ${i+1}/${keys.length} → ${code}: ${msg}`);
+        // 429 = rate limit, 503 = sobrecarga: esperamos antes de intentar la siguiente clave
+        if (code === 429 || code === 503 || msg.includes('demand')) {
+          await new Promise(r => setTimeout(r, 2000 * (i + 1))); // backoff progresivo
+          continue;
         }
         continue;
       }
@@ -195,28 +271,134 @@ export const analyzeClinicalReport = async (file: File): Promise<ClinicalAnalysi
   const prompt = `Analiza este informe médico para un anciano de forma pedagógica. Responde SOLO JSON: { "summary": "...", "biomarkers": { "hemoglobin": "...", ... }, "recommendations": ["..."] }`;
   const mimeType = getEffectiveMimeType(file);
   const base64 = await fileToBase64(file);
-  try { return await callGemini({ contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType, data: base64 } }] }] }); }
-  catch { const res = await callGroqWithImage(prompt, base64, mimeType); return JSON.parse(cleanJsonResponse(res)); }
+  try { const res = await callOpenRouter(prompt, base64, mimeType); return JSON.parse(cleanJsonResponse(res)); }
+  catch { 
+      try { return await callGemini({ contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType, data: base64 } }] }] }); }
+      catch { const res = await callGroqWithImage(prompt, base64, mimeType); return JSON.parse(cleanJsonResponse(res)); }
+  }
 };
 
 export const analyzeClinicalText = async (text: string): Promise<ClinicalAnalysisResult> => {
   const prompt = `Analiza este texto médico para un anciano. Responde SOLO JSON con summary, biomarkers y recommendations. TEXTO: ${text}`;
-  try { return await callGemini({ contents: [{ parts: [{ text: prompt }] }] }); }
-  catch { const res = await callGroqText(prompt); return JSON.parse(cleanJsonResponse(res)); }
+  try {
+    console.log("[IA] Análisis texto → OpenRouter (Prioridad 1)...");
+    const res = await callOpenRouter(prompt);
+    return JSON.parse(cleanJsonResponse(res));
+  } catch {
+    try {
+        console.log("[IA] Análisis texto → Groq (Fallback 1)...");
+        const res = await callGroqText(prompt);
+        return JSON.parse(cleanJsonResponse(res));
+    } catch {
+        console.log("[IA] Análisis texto → Gemini (Fallback 2)...");
+        return await callGemini({ contents: [{ parts: [{ text: prompt }] }] });
+    }
+  }
 };
 
 export const analyzeFoodPhoto = async (file: File): Promise<NutritionalAnalysisResult> => {
-  const prompt = `Analiza esta comida para un anciano de forma pedagógica. Responde SOLO JSON con calories, nutriScore, nutritionScores, macros, micros, portions (comentario pedagógico), suggestions (3 consejos).`;
+  const prompt = `Analiza esta comida visualmente para un paciente geriátrico.
+
+DEVUELVE ÚNICAMENTE UN OBJETO JSON EXACTAMENTE CON ESTA ESTRUCTURA (SIN texto adicional, SIN markdown):
+{
+  "calories": "estimación en kcal, ej: 350 kcal",
+  "nutriScore": "A, B, C, D o E",
+  "nutritionScores": {
+    "protein": 80, 
+    "fiber": 60,
+    "healthyFats": 45,
+    "micronutrients": 70,
+    "glycemicIndex": 90,
+    "sodiumBalance": 50
+  },
+  "macros": {
+    "protein": "valor en g",
+    "carbs": "valor en g",
+    "fatsTotal": "valor en g"
+  },
+  "micros": {
+    "iron": "...",
+    "calcium": "...",
+    "vitaminD": "..."
+  },
+  "portions": "Comentario pedagógico detallado, cálido y médico sobre por qué este plato es bueno o malo para su edad. Evita usar caracteres raros o etiquetas.",
+  "suggestions": [
+    "Consejo breve 1",
+    "Consejo breve 2",
+    "Consejo breve 3"
+  ]
+}
+Recuerda: Los valores dentro de 'nutritionScores' deben ser NÚMEROS DEL 0 al 100 estimando su calidad.`;
   const mimeType = getEffectiveMimeType(file);
   const base64 = await fileToBase64(file);
-  try { return await callGemini({ contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType, data: base64 } }] }] }); }
-  catch { const res = await callGroqWithImage(prompt, base64, mimeType); return JSON.parse(cleanJsonResponse(res)); }
+  
+  try { 
+      console.log("[IA] Análisis nutricional → OpenRouter (Prioridad 1)...");
+      const res = await callOpenRouter(prompt, base64, mimeType); 
+      return JSON.parse(cleanJsonResponse(res)); 
+  } catch (err) { 
+      try { 
+          console.log("[IA] Análisis nutricional → Gemini (Fallback 1)...", err);
+          return await callGemini({ contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType, data: base64 } }] }] }); 
+      } catch (geminiErr) { 
+          console.log("[IA] Análisis nutricional → Groq (Fallback 2)...", geminiErr);
+          const res = await callGroqWithImage(prompt, base64, mimeType); 
+          return JSON.parse(cleanJsonResponse(res)); 
+      }
+  }
 };
 
-export const generateHealthRecommendations = async (healthData: HealthData, vigsScore: VigsScore) => {
-  const prompt = `Genera 3 recomendaciones de salud empáticas para un anciano basándote en estos datos: ${JSON.stringify(healthData)} y fragilidad VIGS: ${JSON.stringify(vigsScore)}. Responde SOLO JSON: { "recommendations": [{ "title": "...", "justification": "...", "step": "..." }] }`;
-  try { return await callGemini({ contents: [{ parts: [{ text: prompt }] }] }); }
-  catch { const res = await callGroqText(prompt); const parsed = JSON.parse(cleanJsonResponse(res)); return parsed.recommendations || []; }
+export const generateWeeklyChallenges = async (healthData: HealthData, vigsScore: VigsScore, profile: UserProfile): Promise<Challenge[]> => {
+  const prompt = `Actúa como un geriatra experto. Genera EXACTAMENTE 3 retos semanales para el paciente ${profile.displayName} (${profile.age} años) basándote en:
+  - Constantes: ${JSON.stringify(healthData)}
+  - Fragilidad (VIGS): ${JSON.stringify(vigsScore)}
+  
+  INSTRUCCIÓN CRÍTICA: Debes identificar los valores que estén fuera de rango (ej: tensión sistólica > 140, circunferencia pantorrilla < 31, glucosa inestable, etc.). Los retos DEBEN estar directamente enfocados a corregir o mitigar dichos valores específicos. 
+  
+  Ejemplos:
+  - Si tiene tensión alta: Reto de reducir sal o caminar suave.
+  - Si tiene bajo peso/poca pantorrilla: Reto de aumentar proteína.
+  - Si tiene riesgo de caídas: Reto de ejercicios de equilibrio.
+  
+  Responde ÚNICAMENTE en JSON:
+  { 
+    "challenges": [
+      { 
+        "id": "unique_id", 
+        "title": "Reto enfocado en [Problema]", 
+        "description": "Explicación médica motivadora", 
+        "points": 50, 
+        "category": "activity|nutrition|vitals|social", 
+        "difficulty": "fácil|medio|difícil",
+        "completed": false
+      }
+    ] 
+  }`;
+
+  try {
+    console.log("[IA] Generando retos semanales → OpenRouter (Prioridad 1)...");
+    const res = await callOpenRouter(prompt);
+    const parsed = JSON.parse(cleanJsonResponse(res));
+    return parsed.challenges || [];
+  } catch (e) {
+    try {
+        console.log("[IA] Generando retos semanales → Groq (Fallback 1)...", e);
+        const res = await callGroqText(prompt);
+        const parsed = JSON.parse(cleanJsonResponse(res));
+        return parsed.challenges || [];
+    } catch (err) {
+        console.log("[IA] Generando retos semanales → Gemini (Fallback 2)...", err);
+        try {
+            const res = await callGemini({ contents: [{ parts: [{ text: prompt }] }] });
+            const resText = res.candidates?.[0]?.content?.parts?.[0]?.text || "";
+            const parsed = JSON.parse(cleanJsonResponse(resText));
+            return parsed.challenges || [];
+        } catch (finalErr) {
+            console.error("[IA] Fallo crítico generando retos:", finalErr);
+            return [];
+        }
+    }
+  }
 };
 
 // ═══════════════════════════════════════════════════════
@@ -268,20 +450,29 @@ export const generateDailySummary = async (
     }
   `;
 
-  // 1. PRIORIDAD: GROQ (CON ROTACIÓN)
+  // 1. PRIORIDAD: OPENROUTER
   try {
-    console.log("[IA] Solicitando resumen a Groq (Prioridad 1 con rotación)...");
+    console.log("[IA] Solicitando resumen a OpenRouter (Prioridad 1)...");
+    const res = await callOpenRouter(prompt);
+    const parsed = JSON.parse(cleanJsonResponse(res));
+    if (parsed?.highlights) return parsed;
+  } catch (err: any) { console.warn("[IA] OpenRouter falló en resumen:", err.message); }
+
+  // 2. FALLBACK 1: GROQ
+  try {
+    console.log("[IA] Solicitando resumen a Groq (Fallback 1)...");
     const result = await callGroqText(prompt);
-    console.log("[IA] Respuesta RAW de Groq:", result);
     const parsed = JSON.parse(cleanJsonResponse(result));
     if (parsed?.highlights) return parsed;
   } catch (err: any) { console.warn("[IA] Groq falló en resumen:", err.message); }
 
-  // 2. FALLBACK: GEMINI (ROTACIÓN 4 CLAVES)
+  // 3. FALLBACK 2: GEMINI
   try {
-    console.log("[IA] Solicitando resumen a Gemini (Prioridad 2 con 4 claves)...");
+    console.log("[IA] Solicitando resumen a Gemini (Fallback 2)...");
     return await callGemini({ contents: [{ parts: [{ text: prompt }] }] });
-  } catch (err: any) { console.error('[IA] Falló la generación del resumen:', err.message); }
+  } catch (err: any) { 
+    console.error('[IA] Falló la generación del resumen final en Gemini:', err.message);
+  }
 
   // 3. FALLBACK ESTÁTICO
   return {
@@ -297,4 +488,29 @@ export const generateDailySummary = async (
     ],
     quickTip: 'Pulsa "Actualizar Informe" para intentarlo de nuevo.',
   };
+};
+
+export const explainClinicalData = async (clinicalData: any): Promise<string> => {
+    const prompt = `Actúa como un médico geriatra con gran capacidad pedagógica. 
+    Explica estos valores de una analítica de forma muy sencilla para un paciente mayor: ${JSON.stringify(clinicalData)}.
+    
+    Estructura tu respuesta en:
+    1. Resumen: ¿Cómo está su salud general basándose en esto? (Cercano y amable)
+    2. Valores clave: Explica 2 o 3 valores importantes que necesiten atención o estén muy bien.
+    3. Acción: Un consejo práctico de estilo de vida para mejorar esos valores.
+    
+    Usa un lenguaje humano, no técnico. Evita alarmismos. Máximo 150 palabras.`;
+
+    try {
+        console.log("[IA] Explicación analítica → OpenRouter (Prioridad 1)...");
+        return await callOpenRouter(prompt);
+    } catch (e) {
+        try {
+            console.log("[IA] Explicación analítica → Groq (Fallback)...");
+            return await callGroqText(prompt, false);
+        } catch (finalErr) {
+            console.error("Critical fallback failure:", finalErr);
+            return "No se ha podido generar la explicación en este momento (Límite de servicios alcanzado).";
+        }
+    }
 };

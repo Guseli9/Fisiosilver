@@ -36,7 +36,7 @@ export const NutritionRadarChart: React.FC<NutritionRadarChartProps> = ({ scores
     };
 
     // Build paths
-    const points = dimensions.map((d, i) => getCoords(i, scores[d.key]));
+    const points = dimensions.map((d, i) => getCoords(i, scores?.[d.key] || 0));
     const polyPath = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ') + ' Z';
     
     // Grid paths

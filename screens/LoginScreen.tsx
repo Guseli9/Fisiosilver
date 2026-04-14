@@ -179,7 +179,7 @@ const LoginScreen: React.FC = () => {
         const res = await signUp(email, password);
         if (!res) { setError("No se pudo crear la cuenta."); return; }
         await registerUserInDb(res.uid, {
-            email, displayName: personalData.displayName, age: parseInt(personalData.edad) || 75, gender: personalData.gender, nationality: 'Española', language: 'Español', emergencyContactName: '', emergencyContactPhone: '', hasLegalConsent: true, dataProcessingConsent: true, avatarId, diaryPreferences: diaryFields, healthData: { weight: null, falls: null, systolicBP: null, diastolicBP: null, pulse: null, oxygenSaturation: null, glucose: null, calfCircumference: null, abdominalCircumference: null, height: parseFloat(personalData.height) || 170 }, vigsScore: { score: 0, category: 'No frágil' }, alerts: [], smokingStatus, nutritionalScore: 0
+            email, displayName: personalData.displayName, age: parseInt(personalData.edad) || 75, gender: personalData.gender, nationality: 'Española', language: 'Español', emergencyContactName: '', emergencyContactPhone: '', hasLegalConsent: true, dataProcessingConsent: true, avatarId, diaryPreferences: diaryFields, healthData: { weight: null, falls: null, systolicBP: null, diastolicBP: null, pulse: null, oxygenSaturation: null, glucose: null, calfCircumference: null, abdominalCircumference: null, height: parseFloat(personalData.height) || 170 }, vigsScore: { score: 0, category: 'No frágil' }, alerts: [], smokingStatus, nutritionalScore: 0, points: 0, level: 1
         });
         setIsRegistering(false);
     } catch (e: any) { setError(e.message); }
